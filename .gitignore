@@ -1,0 +1,19 @@
+# Maven
+target/
+.flattened-pom.xml
+dependency-reduced-pom.xml
+
+# Frontend (pretty-site builds into its target/, see vite.config.ts)
+node_modules/
+pretty-site/public/docs-data.js
+*.log
+
+# IDEs / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local assistant notes (not part of the repository)
+CLAUDE.md
