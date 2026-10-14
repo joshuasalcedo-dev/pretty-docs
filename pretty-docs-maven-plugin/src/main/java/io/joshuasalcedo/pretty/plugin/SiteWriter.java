@@ -16,11 +16,11 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 /**
- * Writes the site: the static template from the {@code pretty-site} artifact plus the data files.
+ * Writes the site: the prebuilt template (src/main/resources/pretty-site, built from ../pretty-site) plus the data files.
  */
 public final class SiteWriter {
 
-    /** Classpath folder the pretty-site artifact puts its built template in. */
+    /** Classpath folder holding the prebuilt site template. */
     static final String TEMPLATE_ROOT = "pretty-site";
     /** Marks a directory as ours, so regenerating may clear it. */
     static final String MARKER = ".pretty-docs";

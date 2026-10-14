@@ -265,6 +265,47 @@ class SpringAnalyzerTest {
     }
 
     @Test
+    void metaAnnotatedApplicationsAndBoundProperties() {
+        List<JavaFileStructure> files = List.of(
+                JavaParser.parse("""
+                        package com.meta.annotation;
+                        import org.springframework.boot.autoconfigure.SpringBootApplication;
+                        @SpringBootApplication
+                        public @interface CompanyApplication { }
+                        """, "CompanyApplication.java"),
+                JavaParser.parse("""
+                        package com.meta.app;
+                        import com.meta.annotation.CompanyApplication;
+                        import org.springframework.boot.context.properties.EnableConfigurationProperties;
+                        @CompanyApplication
+                        @EnableConfigurationProperties(AppProperties.class)
+                        public class App { public static void main(String[] args) { } }
+                        """, "App.java"),
+                JavaParser.parse("""
+                        package com.meta.app;
+                        import org.springframework.boot.context.properties.ConfigurationProperties;
+                        @ConfigurationProperties("app")
+                        public record AppProperties(Mail mail, int retries) {
+                            public record Mail(String host) { }
+                        }
+                        """, "AppProperties.java"),
+                JavaParser.parse("package com.meta.app.web;\nimport org.springframework.stereotype.Service;\n@Service public class Inside { }\n", "Inside.java"),
+                JavaParser.parse("package com.elsewhere;\nimport org.springframework.stereotype.Service;\n@Service public class Outside { }\n", "Outside.java"));
+
+        SpringStructure spring = SpringAnalyzer.analyze(files).orElseThrow();
+
+        assertEquals(List.of("com.meta.app.App"), spring.getApplications().stream().map(SpringApplicationStructure::getTypeName).toList(),
+                "the meta-annotation itself is not an application");
+        assertEquals(List.of("com.meta.app"), spring.getApplications().getFirst().getScanPackages());
+        assertTrue(bean(spring, "inside").isInComponentScan());
+        assertTrue(issue(spring, BeanIssue.Kind.OUTSIDE_COMPONENT_SCAN, "outside").getMessage().contains("com.elsewhere"));
+        assertTrue(bean(spring, "app-com.meta.app.AppProperties").getDependencies().isEmpty(), "properties are bound, not injected");
+        assertTrue(spring.getIssues().stream().noneMatch(i -> i.getKind() == BeanIssue.Kind.UNSATISFIED_DEPENDENCY), spring.getIssues().toString());
+        assertEquals(List.of("app.mail.host", "app.retries"),
+                spring.getConfigurationProperties().getFirst().getProperties().stream().map(ConfigurationProperty::getKey).toList());
+    }
+
+    @Test
     void namingHelpers() {
         assertEquals("orderService", SpringAnalyzer.decapitalize("OrderService"));
         assertEquals("URLParser", SpringAnalyzer.decapitalize("URLParser"));

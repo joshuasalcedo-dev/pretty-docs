@@ -65,7 +65,8 @@ public final class SpringAnalyzer {
             "Class", "Pattern", "InetAddress", "UUID", "Instant", "LocalDate", "LocalDateTime", "LocalTime", "Resource");
 
     /** A type plus where it was found. */
-    private record Located(TypeStructure type, String packageName) {
+    /** A type plus where it was found; sourceRoot tells modules apart ("" when unknown, e.g. in-memory sources). */
+    private record Located(TypeStructure type, String packageName, String sourceRoot) {
     }
 
     private final Map<String, Located> types = new LinkedHashMap<>();
@@ -75,6 +76,7 @@ public final class SpringAnalyzer {
     private final List<BeanIssue> issues = new ArrayList<>();
     private final List<PropertyUsage> propertyUsages = new ArrayList<>();
     private final Set<String> fieldInjectionReported = new HashSet<>();
+    private final Map<String, String> applicationRoots = new HashMap<>(); // application type -> source root
 
     private SpringAnalyzer() {
     }
@@ -88,7 +90,7 @@ public final class SpringAnalyzer {
     }
 
     private Optional<SpringStructure> run(Collection<JavaFileStructure> files) {
-        files.forEach(file -> file.getTypes().forEach(type -> index(type, file.getPackageName())));
+        files.forEach(file -> file.getTypes().forEach(type -> index(type, file.getPackageName(), sourceRoot(file))));
         if (types.values().stream().noneMatch(l -> usesSpring(l.type()))) {
             return Optional.empty();
         }
@@ -101,7 +103,7 @@ public final class SpringAnalyzer {
 
         List<ConfigurationPropertiesStructure> properties = configurationProperties();
         declareBeans(properties);
-        checkComponentScan(scanPackages);
+        checkComponentScan(applications, componentScans());
         resolveDependencies();
         checkDuplicates();
         checkCycles();
@@ -125,10 +127,21 @@ public final class SpringAnalyzer {
 
     // ------------------------------------------------------------------ index
 
-    private void index(TypeStructure type, String packageName) {
-        types.put(type.getQualifiedName(), new Located(type, packageName));
+    private void index(TypeStructure type, String packageName, String sourceRoot) {
+        types.put(type.getQualifiedName(), new Located(type, packageName, sourceRoot));
         bySimpleName.computeIfAbsent(type.getName(), k -> new ArrayList<>()).add(type.getQualifiedName());
-        type.getNestedTypes().forEach(nested -> index(nested, packageName));
+        type.getNestedTypes().forEach(nested -> index(nested, packageName, sourceRoot));
+    }
+
+    /** The source directory a file's package lives in (e.g. .../core/src/main/java), "" when the path is unknown. */
+    private static String sourceRoot(JavaFileStructure file) {
+        if (file.getFilePath() == null) {
+            return "";
+        }
+        String dir = file.getFilePath().replace('\\', '/');
+        dir = dir.substring(0, Math.max(dir.lastIndexOf('/'), 0));
+        String packagePath = file.getPackageName().replace('.', '/');
+        return !packagePath.isEmpty() && dir.endsWith("/" + packagePath) ? dir.substring(0, dir.length() - packagePath.length() - 1) : dir;
     }
 
     private boolean usesSpring(TypeStructure type) {
@@ -176,9 +189,25 @@ public final class SpringAnalyzer {
     // ------------------------------------------------------------ applications
 
     private List<SpringApplicationStructure> applications() {
+        // @SpringBootApplication, plus project annotations that carry it (e.g. a company @MyApplication), transitively
+        Set<String> applicationAnnotations = new LinkedHashSet<>(List.of(BOOT + "autoconfigure.SpringBootApplication"));
+        boolean added = true;
+        while (added) {
+            added = false;
+            for (Located located : types.values()) {
+                if (located.type().getKind() == TypeKind.ANNOTATION && !applicationAnnotations.contains(located.type().getQualifiedName())
+                        && has(located.type().getAnnotations(), applicationAnnotations.toArray(String[]::new))) {
+                    added = applicationAnnotations.add(located.type().getQualifiedName());
+                }
+            }
+        }
         List<SpringApplicationStructure> result = new ArrayList<>();
         for (Located located : types.values()) {
-            find(located.type().getAnnotations(), BOOT + "autoconfigure.SpringBootApplication").ifPresent(annotation -> {
+            if (located.type().getKind() == TypeKind.ANNOTATION) {
+                continue; // a meta-annotation is not an application; the classes it annotates are
+            }
+            find(located.type().getAnnotations(), applicationAnnotations.toArray(String[]::new)).ifPresent(annotation -> {
+                applicationRoots.put(located.type().getQualifiedName(), located.sourceRoot());
                 List<String> packages = new ArrayList<>(strings(annotation, "scanBasePackages"));
                 classes(annotation, "scanBasePackageClasses").forEach(c -> packageOfClass(c, located).ifPresent(packages::add));
                 if (packages.isEmpty()) {
@@ -304,7 +333,9 @@ public final class SpringAnalyzer {
                 .line(type.getStartLine())
                 .build();
         applyBeanAnnotations(bean, type.getAnnotations(), List.of());
-        bean.setDependencies(kind == BeanKind.DATA_REPOSITORY ? new ArrayList<>() : injectionPoints(located));
+        // Spring Data creates repositories; @ConfigurationProperties are bound from configuration, not injected
+        boolean noInjection = kind == BeanKind.DATA_REPOSITORY || has(type.getAnnotations(), BOOT_PROPERTIES + "ConfigurationProperties");
+        bean.setDependencies(noInjection ? new ArrayList<>() : injectionPoints(located));
         return bean;
     }
 
@@ -571,19 +602,29 @@ public final class SpringAnalyzer {
                         + needing.stream().map(BeanDefinition::getName).distinct().collect(Collectors.joining(", ")) + ")")));
     }
 
-    private void checkComponentScan(Set<String> scanPackages) {
-        if (scanPackages.isEmpty()) {
-            return;
-        }
+    /**
+     * Stereotypes are found by component scanning from the application in their own source tree.
+     * Beans in source trees without an application (libraries) usually arrive through
+     * auto-configuration instead, so they are not checked.
+     */
+    private void checkComponentScan(List<SpringApplicationStructure> applications, Set<String> componentScans) {
         for (BeanDefinition bean : beans) {
-            if (bean.getKind() == BeanKind.BEAN_METHOD || bean.getKind() == BeanKind.CONFIGURATION_PROPERTIES) {
+            if (bean.getKind() == BeanKind.BEAN_METHOD || bean.getKind() == BeanKind.CONFIGURATION_PROPERTIES
+                    || bean.getKind() == BeanKind.DATA_REPOSITORY || applicationRoots.containsKey(bean.getDeclaringType())) {
                 continue;
             }
-            String packageName = Optional.ofNullable(types.get(bean.getDeclaringType())).map(Located::packageName).orElse("");
+            Located located = types.get(bean.getDeclaringType());
+            List<String> scanPackages = new ArrayList<>(componentScans);
+            applications.stream()
+                    .filter(a -> located.sourceRoot().equals(applicationRoots.get(a.getTypeName())))
+                    .forEach(a -> scanPackages.addAll(a.getScanPackages()));
+            if (scanPackages.size() == componentScans.size()) {
+                continue; // no application in this source tree
+            }
+            String packageName = located.packageName();
             boolean scanned = scanPackages.stream().anyMatch(p -> inPackage(packageName, p));
             bean.setInComponentScan(scanned);
-            if (!scanned && types.get(bean.getDeclaringType()).type().getAnnotations().stream()
-                    .noneMatch(a -> a.getName().equals("SpringBootApplication"))) {
+            if (!scanned) {
                 issues.add(issue(BeanIssue.Severity.WARNING, BeanIssue.Kind.OUTSIDE_COMPONENT_SCAN, bean.getName(), bean.getDeclaringType(),
                         simple(bean.getTypeName()) + " is in package " + packageName + ", outside the scanned packages " + scanPackages
                                 + ": Spring will not find it unless it is imported explicitly"));
@@ -599,10 +640,16 @@ public final class SpringAnalyzer {
         }
         byName.forEach((name, defined) -> {
             if (defined.size() > 1) {
-                issues.add(issue(BeanIssue.Severity.ERROR, BeanIssue.Kind.DUPLICATE_BEAN_NAME, name, defined.getFirst().getDeclaringType(),
+                // Only certain when they share one source tree and none is conditional; otherwise they may never meet.
+                boolean oneSourceTree = defined.stream().map(b -> types.get(b.getDeclaringType()).sourceRoot()).distinct().count() == 1;
+                boolean conditional = defined.stream().anyMatch(b -> !b.getConditions().isEmpty() || !b.getProfiles().isEmpty());
+                String caveat = !oneSourceTree ? " if they end up in the same application context (they are in different modules)"
+                        : conditional ? " unless their conditions or profiles exclude each other" : "";
+                issues.add(issue(oneSourceTree && !conditional ? BeanIssue.Severity.ERROR : BeanIssue.Severity.WARNING,
+                        BeanIssue.Kind.DUPLICATE_BEAN_NAME, name, defined.getFirst().getDeclaringType(),
                         "Bean name \"" + name + "\" is defined " + defined.size() + " times (" + defined.stream()
                                 .map(b -> simple(b.getDeclaringType()) + (b.getDeclaringMember() != null ? "." + b.getDeclaringMember() + "()" : ""))
-                                .collect(Collectors.joining(", ")) + "); Spring Boot rejects bean overriding by default"));
+                                .collect(Collectors.joining(", ")) + "); Spring Boot rejects bean overriding by default" + caveat));
             }
         });
     }

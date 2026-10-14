@@ -1,8 +1,9 @@
 # Pretty Site
 
 The site template the Pretty Docs Maven plugin fills with your project's documentation. It is a React app
-(Vite, TypeScript, Tailwind CSS v4, shadcn/ui on Base UI) built into **one self-contained `index.html`**
-and packaged as a jar of classpath resources under `pretty-site/`.
+(Vite, TypeScript, Tailwind CSS v4, shadcn/ui on Base UI) built into **one self-contained `index.html`**,
+which is committed into the plugin at `pretty-docs-maven-plugin/src/main/resources/pretty-site/`. This folder
+is not a Maven module: Maven builds never run Node.js.
 
 At generation time the plugin copies that `index.html` next to the data it writes (`docs-data.js`,
 `docs.json`, `diagrams/`), so the result works from any static host and straight from `file://`.
@@ -21,15 +22,14 @@ The data shape is defined by the plugin's `DocumentationSite` model and mirrored
 
 ```shell
 # 1. Generate data for any project
-mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:0.0.1-SNAPSHOT:generate
+mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.0.0:generate
 # 2. Use it in the dev server
 cp target/pretty-docs/docs-data.js pretty-site/public/
 cd pretty-site && npm run dev
 ```
 
-`npm run build` type-checks and writes the single-file build to `target/classes/pretty-site/`; the Maven
-build of this module runs `npm ci` and `npm run build` for you (`-Dpretty-site.skipNpm` reuses the last
-build).
+`npm run build` type-checks and writes the single-file build into the plugin's resources. Commit that
+`index.html` together with your source change; CI rebuilds it and fails if the two differ.
 
 | Path | What is there |
 |---|---|

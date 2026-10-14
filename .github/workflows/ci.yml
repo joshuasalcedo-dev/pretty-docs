@@ -17,12 +17,29 @@ jobs:
           java-version: 21
           cache: maven
 
-      # pretty-site runs `npm ci` + `npm run build` inside the Maven build
+      # No Node.js: the site template is prebuilt into the plugin's resources.
+      - name: Build and test
+        run: mvn -B -ntp verify
+
+  site-template:
+    name: Site template is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
       - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: pretty-site/package-lock.json
 
-      - name: Build and test
-        run: mvn -B -ntp verify -Dgpg.skip
+      - name: Rebuild the template from pretty-site/
+        working-directory: pretty-site
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Compare with the committed template
+        run: |
+          git diff --exit-code -- pretty-docs-maven-plugin/src/main/resources/pretty-site \
+            || { echo "::error::The committed site template is stale. Run 'npm run build' in pretty-site/ and commit the result."; exit 1; }

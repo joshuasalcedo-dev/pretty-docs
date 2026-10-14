@@ -42,12 +42,8 @@
             <artifactId>pretty-spring</artifactId>
             <version>${revision}</version>
         </dependency>
-        <dependency>
-            <groupId>io.joshuasalcedo.pretty</groupId>
-            <artifactId>pretty-site</artifactId>
-            <version>${revision}</version>
-            <scope>runtime</scope>
-        </dependency>
+        <!-- The site template is prebuilt into src/main/resources/pretty-site (see ../pretty-site), so
+             building and using the plugin needs no Node.js. -->
 
         <dependency>
             <groupId>net.sourceforge.plantuml</groupId>

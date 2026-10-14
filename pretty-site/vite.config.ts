@@ -6,6 +6,8 @@ import { viteSingleFile } from "vite-plugin-singlefile"
 
 // The template is a single self-contained index.html (JS/CSS/fonts inlined) so the generated
 // site opens straight from disk; module scripts and fetch() are blocked on file:// URLs.
+// It is built into the plugin's resources and committed there: building the plugin (and using it)
+// needs no Node.js. Run `npm run build` after changing the site, and commit the result.
 export default defineConfig({
   base: "./",
   plugins: [react(), tailwindcss(), viteSingleFile()],
@@ -15,7 +17,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "target/classes/pretty-site",
+    outDir: resolve(import.meta.dirname, "../pretty-docs-maven-plugin/src/main/resources/pretty-site"),
     emptyOutDir: true,
   },
 })
