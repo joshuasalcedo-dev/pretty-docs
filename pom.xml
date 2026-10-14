@@ -13,7 +13,7 @@
     <!-- Project Information -->
     <name>pretty-docs-parent</name>
     <description>A modern framework for creating beautiful and interactive Java documentation</description>
-    <url>https://github.com/joshuasalcedo-io/pretty-javadocs</url>
+    <url>https://github.com/joshuasalcedo-dev/pretty-docs</url>
     <inceptionYear>2025</inceptionYear>
 
 <!--  Modules  -->
@@ -52,22 +52,22 @@
 
     <!-- SCM Information -->
     <scm>
-        <connection>scm:git:git://github.com/joshuasalcedo-io/pretty-javadocs.git</connection>
-        <developerConnection>scm:git:ssh://github.com:joshuasalcedo-io/pretty-javadocs.git</developerConnection>
-        <url>https://github.com/joshuasalcedo-io/pretty-javadocs</url>
+        <connection>scm:git:git://github.com/joshuasalcedo-dev/pretty-docs.git</connection>
+        <developerConnection>scm:git:ssh://github.com:joshuasalcedo-dev/pretty-docs.git</developerConnection>
+        <url>https://github.com/joshuasalcedo-dev/pretty-docs</url>
         <tag>HEAD</tag>
     </scm>
 
     <!-- Issue Management -->
     <issueManagement>
         <system>GitHub Issues</system>
-        <url>https://github.com/joshuasalcedo-io/pretty-javadocs/issues</url>
+        <url>https://github.com/joshuasalcedo-dev/pretty-docs/issues</url>
     </issueManagement>
 
     <!-- CI Management -->
     <ciManagement>
         <system>GitHub Actions</system>
-        <url>https://github.com/joshuasalcedo-io/pretty-javadocs/actions</url>
+        <url>https://github.com/joshuasalcedo-dev/pretty-docs/actions</url>
     </ciManagement>
 
     <!-- Project Properties -->
@@ -469,7 +469,7 @@
                 <repository>
                     <id>github</id>
                     <name>GitHub Packages</name>
-                    <url>https://maven.pkg.github.com/joshuasalcedo-io/pretty-javadocs</url>
+                    <url>https://maven.pkg.github.com/joshuasalcedo-dev/pretty-docs</url>
                 </repository>
             </distributionManagement>
         </profile>
