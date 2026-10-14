@@ -83,8 +83,8 @@
         <!-- Dependency versions -->
         <junit.version>5.12.2</junit.version>
         <mockito.version>5.15.2</mockito.version>
-        <jsoup.version>1.20.1</jsoup.version>
-        <jackson.version>2.19.0</jackson.version>
+        <jsoup.version>1.23.2</jsoup.version>
+        <jackson.version>2.21.7</jackson.version>
         <commonmark.version>0.30.1</commonmark.version>
 
         <!-- Plugin versions -->
@@ -206,7 +206,7 @@
             <dependency>
                 <groupId>org.eclipse.jgit</groupId>
                 <artifactId>org.eclipse.jgit</artifactId>
-                <version>7.2.0.202503040940-r</version>
+                <version>7.2.1.202505142326-r</version>
             </dependency>
 
             <dependency>
