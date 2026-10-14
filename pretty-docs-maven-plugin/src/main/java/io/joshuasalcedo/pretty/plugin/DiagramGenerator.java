@@ -284,19 +284,33 @@ public final class DiagramGenerator {
         }
         Map<String, ModuleDocumentation> byId = new LinkedHashMap<>();
         site.getModules().forEach(m -> byId.put(m.getId(), m));
-        StringBuilder puml = new StringBuilder("@startuml\n").append(STYLE);
-        for (ModuleDocumentation module : site.getModules()) {
-            puml.append("component \"").append(name(module)).append("\\n<size:10>").append(module.getProject().getPackaging())
-                    .append(" · ").append(module.getStatistics().getTypes()).append(" types</size>\" as ").append(alias(module.getId())).append('\n');
-        }
+        List<String> edges = new ArrayList<>();
+        Set<String> connected = new HashSet<>();
         for (ModuleDocumentation module : site.getModules()) {
             for (DependencyStructure dependency : module.getProject().getDependencies()) {
                 String target = dependency.getGroupId() + ":" + dependency.getArtifactId();
-                if (byId.containsKey(target)) {
-                    puml.append(alias(module.getId())).append(" --> ").append(alias(target))
-                            .append("compile".equals(dependency.getScope()) ? "" : " : " + dependency.getScope()).append('\n');
+                if (byId.containsKey(target) && !target.equals(module.getId())) {
+                    edges.add(alias(module.getId()) + " --> " + alias(target)
+                            + ("compile".equals(dependency.getScope()) ? "" : " : " + dependency.getScope()));
+                    connected.add(module.getId());
+                    connected.add(target);
                 }
             }
+        }
+        // Smetana's layout crashes on graphs mixing connected and unconnected nodes, so modules without
+        // dependencies either way go into the legend (unless no module has any).
+        List<ModuleDocumentation> shown = edges.isEmpty() ? site.getModules()
+                : site.getModules().stream().filter(m -> connected.contains(m.getId())).toList();
+        List<String> unconnected = site.getModules().stream().filter(m -> !shown.contains(m)).map(DiagramGenerator::name).toList();
+
+        StringBuilder puml = new StringBuilder("@startuml\n").append(STYLE);
+        for (ModuleDocumentation module : shown) {
+            puml.append("component \"").append(name(module)).append("\\n<size:10>").append(module.getProject().getPackaging())
+                    .append(" · ").append(module.getStatistics().getTypes()).append(" types</size>\" as ").append(alias(module.getId())).append('\n');
+        }
+        edges.forEach(edge -> puml.append(edge).append('\n'));
+        if (!unconnected.isEmpty()) {
+            puml.append("legend bottom left\nNo dependencies on other modules: ").append(String.join(", ", unconnected)).append("\nendlegend\n");
         }
         puml.append("@enduml\n");
         return Optional.of(render(DiagramStructure.builder()
@@ -359,18 +373,27 @@ public final class DiagramGenerator {
         structure.setPumlPath("diagrams/" + structure.getId() + ".puml");
         byte[] svg = null;
         if (render) {
+            // PlantUML prints its own stack traces when a layout crashes; keep them out of the build log.
+            java.io.PrintStream stderr = System.err;
             try {
+                System.setErr(new java.io.PrintStream(java.io.OutputStream.nullOutputStream()));
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 new SourceStringReader(puml, StandardCharsets.UTF_8).outputImage(out, new FileFormatOption(FileFormat.SVG));
                 String text = out.toString(StandardCharsets.UTF_8);
-                if (text.contains("<svg") && !text.contains(">Syntax Error?<")) {
+                // On a crash PlantUML still returns an SVG: a picture of the error.
+                boolean failed = !text.contains("<svg") || text.contains(">Syntax Error?<") || text.contains("has crashed")
+                        || text.contains("An error has occured") || text.contains("An error has occurred");
+                if (!failed) {
                     svg = out.toByteArray();
                     structure.setSvgPath("diagrams/" + structure.getId() + ".svg");
                 } else {
-                    log.accept("PlantUML could not render " + structure.getTitle() + " (see " + structure.getPumlPath() + ")");
+                    log.accept("PlantUML could not lay out \"" + structure.getTitle() + "\"; the site offers its source instead ("
+                            + structure.getPumlPath() + ")");
                 }
             } catch (IOException | RuntimeException | StackOverflowError e) {
-                log.accept("PlantUML failed on " + structure.getTitle() + ": " + e);
+                log.accept("PlantUML failed on \"" + structure.getTitle() + "\": " + e);
+            } finally {
+                System.setErr(stderr);
             }
         }
         return new Diagram(structure, puml, svg);

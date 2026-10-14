@@ -147,6 +147,24 @@ class DocumentationGeneratorTest {
     }
 
     @Test
+    void moduleGraphWithUnconnectedModulesRenders() throws IOException {
+        DocumentationSite site = generate(Visibility.PROTECTED, true);
+        // web -> core is connected; the parent POM has no dependency edges: the mix Smetana crashed on
+        module(site, "com.example:web").getProject().setDependencies(List.of(
+                io.joshuasalcedo.pretty.maven.model.DependencyStructure.builder()
+                        .groupId("com.example").artifactId("core").version("1.0").scope("compile").build()));
+        List<String> warnings = new ArrayList<>();
+
+        DiagramGenerator.Diagram modules = new DiagramGenerator(true, warnings::add).generate(site).getFirst();
+
+        assertTrue(modules.puml().contains("e_com_example_web --> e_com_example_core"), modules.puml());
+        assertFalse(modules.puml().contains("as e_com_example_shop"), "unconnected modules are not graph nodes");
+        assertTrue(modules.puml().contains("No dependencies on other modules: shop"));
+        assertNotNull(modules.svg(), warnings.toString());
+        assertFalse(new String(modules.svg(), java.nio.charset.StandardCharsets.UTF_8).contains("has crashed"));
+    }
+
+    @Test
     void countsLinesPerModule() throws IOException {
         ModuleDocumentation core = module(generate(Visibility.PUBLIC, true), "com.example:core");
 

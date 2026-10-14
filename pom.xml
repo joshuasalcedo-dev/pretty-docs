@@ -71,7 +71,7 @@
 
     <!-- Project Properties -->
     <properties>
-        <revision>1.0.0</revision>
+        <revision>1.0.1</revision>
 
         <!-- Build properties -->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -144,6 +144,10 @@
                 <artifactId>plantuml-mit</artifactId>
                 <version>${plantuml.version}</version>
             </dependency>
+
+
+
+
             <!-- Java source parsing -->
             <dependency>
                 <groupId>org.eclipse.jdt</groupId>
@@ -157,12 +161,19 @@
                 <version>${junit.version}</version>
                 <scope>test</scope>
             </dependency>
+
+
+
+
             <dependency>
                 <groupId>org.mockito</groupId>
                 <artifactId>mockito-core</artifactId>
                 <version>${mockito.version}</version>
                 <scope>test</scope>
             </dependency>
+
+
+
             <dependency>
                 <groupId>commons-io</groupId>
                 <artifactId>commons-io</artifactId>
