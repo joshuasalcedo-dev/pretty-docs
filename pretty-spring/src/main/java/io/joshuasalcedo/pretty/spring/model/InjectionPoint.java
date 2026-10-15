@@ -9,7 +9,7 @@ import java.util.List;
  * Something a bean asks Spring to inject.
  */
 @Data
-@Builder
+@Builder(toBuilder = true)
 public class InjectionPoint {
     public enum Kind { CONSTRUCTOR, FIELD, SETTER, BEAN_METHOD_PARAMETER }
 

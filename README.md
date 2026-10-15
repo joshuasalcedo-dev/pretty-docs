@@ -45,6 +45,18 @@ disk or any static host.
   `@ConfigurationProperties` keys, `@Value` placeholders and JPA entities. Wiring problems Spring would hit at
   startup are reported in the site and in the build log: missing and ambiguous dependencies, circular
   dependencies, duplicate bean names, components outside the scanned packages, and more.
+- **One context per application.** In a multi-module build each `@SpringBootApplication` (or a project
+  annotation carrying it) gets its own context: its module plus the build modules it depends on, what it scans
+  and `@Import`s, and the auto-configurations those modules list in `AutoConfiguration.imports` /
+  `spring.factories`. `@Profile`, `@ConditionalOnProperty` (against that application's configuration files) and
+  `@ConditionalOnMissingBean` / `@ConditionalOnBean` are evaluated, so a bean that backs off is not reported as
+  ambiguous. Other conditions are assumed to hold. Issues and beans are tagged with the applications they
+  belong to, and the site can filter by application.
+- **Configuration files.** `application*.yml` / `.properties` (and `bootstrap*`, in a resource folder or its
+  `config/`) are shown highlighted, with every key linked to what reads it: `@ConfigurationProperties`,
+  `@Value`, `@ConditionalOnProperty`, `Environment.getProperty` calls, or a library's
+  `spring-configuration-metadata.json` (read from the resolved dependencies). Keys nothing reads are flagged,
+  with a "did you mean" suggestion for likely typos, and so are required `@Value` placeholders no file sets.
 
 ## Requirements
 
@@ -55,8 +67,8 @@ disk or any static host.
 ## Quick start
 
 The plugin is not on Maven Central yet. Install it into your local Maven repository once, either from the
-[1.0.1 release](https://github.com/joshuasalcedo-dev/pretty-docs/releases/tag/v1.0.1) (unzip
-`pretty-docs-1.0.1-maven-repository.zip` into `~/.m2/repository`) or from source:
+[1.1.0 release](https://github.com/joshuasalcedo-dev/pretty-docs/releases/tag/v1.1.0) (unzip
+`pretty-docs-1.1.0-maven-repository.zip` into `~/.m2/repository`) or from source:
 
 ```shell
 git clone git@github.com:joshuasalcedo-dev/pretty-docs.git
@@ -67,7 +79,7 @@ mvn install
 Then, in the root of **any** Maven project:
 
 ```shell
-mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.0.1:generate
+mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.1.0:generate
 ```
 
 The site is written to `target/pretty-docs/`. The build log tells you how to open it:
@@ -75,7 +87,7 @@ The site is written to `target/pretty-docs/`. The build log tells you how to ope
 ```text
 [INFO] Documented 113 types in 8 module(s) (resolved mode, 7 external javadoc site(s) linked)
 [INFO] Please run one of these commands to serve the static site:
-[INFO]   mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.0.1:serve
+[INFO]   mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.1.0:serve
 [INFO]   npx serve "target/pretty-docs" -l 4400
 [INFO]   python -m http.server 4400 -d "target/pretty-docs"
 [INFO] Then open: http://localhost:4400/
@@ -93,7 +105,7 @@ Add the plugin to your root POM so the command gets shorter and the settings liv
     <plugin>
       <groupId>io.joshuasalcedo.pretty</groupId>
       <artifactId>pretty-docs-maven-plugin</artifactId>
-      <version>1.0.1</version>
+      <version>1.1.0</version>
       <configuration>
         <visibility>protected</visibility>
         <excludeModules>
@@ -156,10 +168,14 @@ default `localhost`; use `0.0.0.0` to allow other machines).
 ```text
 target/pretty-docs/
 ├── index.html      the site (one self-contained file: app, styles, fonts)
-├── docs-data.js    your project's data, loaded by index.html
-├── docs.json       the same data as JSON, for your own tooling
+├── docs-data.js    an outline of your project (modules, types, signatures), loaded by index.html
+├── modules/        each module's full sources, loaded when one of its pages is opened
+├── docs.json       all the data as one JSON file, for your own tooling
 └── diagrams/       *.puml sources and their rendered *.svg
 ```
+
+The split keeps large builds quick to open: the site starts from the outline and fetches a module's data
+(through a script tag, so it works from `file://` too) only when you visit it.
 
 ## Deploying the docs
 
@@ -176,7 +192,7 @@ This repository publishes its own documentation with
 ```yaml
 - uses: actions/setup-java@v5
   with: { distribution: temurin, java-version: 21, cache: maven }
-- run: mvn -B -ntp io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.0.1:generate
+- run: mvn -B -ntp io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.1.0:generate
 - uses: actions/upload-pages-artifact@v3
   with: { path: target/pretty-docs }
 # then actions/deploy-pages@v4 in a job with `pages: write` and `id-token: write`
@@ -216,12 +232,12 @@ mvn install -pl pretty-java -am                 # one module and what it needs
 mvn -pl pretty-spring test -Dtest=SpringAnalyzerTest#reportsWiringProblems
 
 # Try it on this repository
-mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.0.1:generate
-mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.0.1:serve
+mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.1.0:generate
+mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.1.0:serve
 ```
 
 Working on the site template (Node.js 20+): generate docs for any project, copy its
-`target/pretty-docs/docs-data.js` to `pretty-site/public/`, then run `npm run dev` in `pretty-site/`. When
+`target/pretty-docs/docs-data.js` and `modules/` folder to `pretty-site/public/`, then run `npm run dev` in `pretty-site/`. When
 done, `npm run build` writes the template into `pretty-docs-maven-plugin/src/main/resources/pretty-site/`;
 commit that file with your change (CI checks it matches the source).
 

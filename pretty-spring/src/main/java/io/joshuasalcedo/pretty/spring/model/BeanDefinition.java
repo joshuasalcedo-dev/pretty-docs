@@ -9,7 +9,7 @@ import java.util.List;
  * A bean Spring would create.
  */
 @Data
-@Builder
+@Builder(toBuilder = true)
 public class BeanDefinition {
     private String name; // bean name (explicit, or the default Spring derives)
     private List<String> aliases; // additional @Bean names
@@ -28,4 +28,7 @@ public class BeanDefinition {
     private List<String> injectedInto; // names of beans that depend on this one
     private boolean inComponentScan; // false when outside every scan package (only meaningful for scanned stereotypes)
     private int line;
+    private boolean autoConfigured; // declared by (or imported from) an auto-configuration listed in AutoConfiguration.imports
+    private List<String> applications; // applications whose context includes it (empty when not worked out per application)
+    private List<String> notes; // why it is left out of, or backs off in, an application context
 }

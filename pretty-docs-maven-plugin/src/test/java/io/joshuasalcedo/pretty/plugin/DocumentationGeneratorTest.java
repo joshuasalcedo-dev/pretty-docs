@@ -77,6 +77,15 @@ class DocumentationGeneratorTest {
         assertTrue(Files.readString(out.resolve("docs-data.js")).startsWith("window.__PRETTY_DOCS__ = {"));
         assertTrue(Files.readString(out.resolve("docs.json")).contains("\"rootModuleId\": \"com.example:shop\""));
 
+        // docs-data.js holds an outline; the module's own script holds its full sources
+        String outline = Files.readString(out.resolve("docs-data.js"));
+        assertTrue(outline.contains("\"outline\":true"));
+        assertTrue(outline.contains("\"dataScript\":\"modules/com-example-core.js\""));
+        assertFalse(outline.contains("\"body\""), "method bodies stay out of the outline");
+        String core = Files.readString(out.resolve("modules/com-example-core.js"));
+        assertTrue(core.startsWith("(window.__PRETTY_DOCS_MODULES__ = window.__PRETTY_DOCS_MODULES__ || {})[\"com.example:core\"] = {\"files\":"));
+        assertTrue(core.contains("\"body\""));
+
         new SiteWriter().write(site, out); // regenerating over our own output is allowed
 
         try (StaticSiteServer server = new StaticSiteServer(out, "localhost", 0)) {

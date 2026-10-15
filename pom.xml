@@ -71,7 +71,7 @@
 
     <!-- Project Properties -->
     <properties>
-        <revision>1.0.1</revision>
+        <revision>1.1.0</revision>
 
         <!-- Build properties -->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -104,6 +104,7 @@
         <maven.version>3.9.16</maven.version>
         <maven-plugin-tools.version>3.16.0</maven-plugin-tools.version>
         <plantuml.version>1.2026.8</plantuml.version>
+        <snakeyaml.version>2.7</snakeyaml.version>
     </properties>
 
     <!-- Repository configuration -->
@@ -148,6 +149,12 @@
 
 
 
+            <!-- Spring configuration files (YAML with comments and line numbers) -->
+            <dependency>
+                <groupId>org.yaml</groupId>
+                <artifactId>snakeyaml</artifactId>
+                <version>${snakeyaml.version}</version>
+            </dependency>
             <!-- Java source parsing -->
             <dependency>
                 <groupId>org.eclipse.jdt</groupId>

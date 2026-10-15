@@ -18,5 +18,7 @@ public class SpringStructure {
     private List<ConfigurationPropertiesStructure> configurationProperties;
     private List<PropertyUsage> propertyUsages; // @Value placeholders
     private List<EntityStructure> entities; // JPA entities
+    private List<ConfigurationFileStructure> configurationFiles; // application*.yml / .properties of every module
+    private List<ConfigurationKey> configurationKeys; // every key those files set, and what reads it
     private List<BeanIssue> issues;
 }

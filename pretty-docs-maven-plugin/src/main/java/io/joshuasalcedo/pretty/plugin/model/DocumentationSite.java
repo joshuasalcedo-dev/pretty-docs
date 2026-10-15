@@ -13,7 +13,7 @@ import java.util.List;
 @Data
 @Builder
 public class DocumentationSite {
-    public static final int SCHEMA_VERSION = 1;
+    public static final int SCHEMA_VERSION = 2; // 2: docs-data.js holds an outline; full module sources are in modules/*.js
 
     private int schemaVersion;
     private String title;

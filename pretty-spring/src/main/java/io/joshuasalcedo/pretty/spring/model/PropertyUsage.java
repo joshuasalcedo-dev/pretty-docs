@@ -14,4 +14,6 @@ public class PropertyUsage {
     private String expression; // the annotation value as written
     private String typeName; // where it is used
     private String memberName;
+    private String source; // @Value, @ConditionalOnProperty or Environment
+    private boolean required; // startup fails when it is not set (@Value without default, getRequiredProperty)
 }

@@ -15,9 +15,14 @@ import static io.joshuasalcedo.pretty.spring.Annotations.*;
  * for what Spring would reject at startup (missing, ambiguous or circular dependencies, duplicate
  * names) and for common mistakes.
  * <p>
- * Static analysis has limits: auto-configured beans, {@code @Import}ed library configurations,
- * conditions and profiles are not evaluated. Dependencies on types outside the project are
- * therefore reported as information, not errors.
+ * Given the build layout ({@link ProjectLayout}), each application gets its own context: the beans
+ * of its module and the modules it depends on that it component-scans, imports or auto-configures,
+ * with {@code @Profile}, {@code @ConditionalOnProperty} (against its configuration files) and
+ * {@code @ConditionalOn(Missing)Bean} evaluated. Other conditions are assumed to hold. Without the
+ * layout, all beans are checked as one context.
+ * <p>
+ * Library auto-configurations are not read, so dependencies on types outside the project are
+ * reported as information, not errors.
  */
 public final class SpringAnalyzer {
 
@@ -64,9 +69,8 @@ public final class SpringAnalyzer {
             "BigInteger", "Duration", "Period", "DataSize", "Charset", "Locale", "File", "Path", "URI", "URL",
             "Class", "Pattern", "InetAddress", "UUID", "Instant", "LocalDate", "LocalDateTime", "LocalTime", "Resource");
 
-    /** A type plus where it was found. */
     /** A type plus where it was found; sourceRoot tells modules apart ("" when unknown, e.g. in-memory sources). */
-    private record Located(TypeStructure type, String packageName, String sourceRoot) {
+    private record Located(TypeStructure type, String packageName, String sourceRoot, List<ImportStructure> imports) {
     }
 
     private final Map<String, Located> types = new LinkedHashMap<>();
@@ -77,8 +81,23 @@ public final class SpringAnalyzer {
     private final List<PropertyUsage> propertyUsages = new ArrayList<>();
     private final Set<String> fieldInjectionReported = new HashSet<>();
     private final Map<String, String> applicationRoots = new HashMap<>(); // application type -> source root
+    // What resolveDependencies, checkDuplicates and checkCycles look at and report to: all beans and the
+    // main issue list, or one application's context and its own list (see analyzeContexts).
+    private List<BeanDefinition> scope = beans;
+    private List<BeanIssue> sink = issues;
+    // Within an application context: beans whose conditions could not be evaluated, and the beans left out (with why).
+    private Set<BeanDefinition> uncertain;
+    private Map<BeanDefinition, String> leftOut;
 
-    private SpringAnalyzer() {
+    private final ProjectLayout layout; // null when only the sources are known
+    private final Map<String, String> moduleOfSourceRoot = new HashMap<>(); // lower-cased, '/' separators
+    private final Map<BeanDefinition, Origin> origins = new IdentityHashMap<>();
+
+    private SpringAnalyzer(ProjectLayout layout) {
+        this.layout = layout;
+        if (layout != null) {
+            layout.moduleOfSourceRoot().forEach((root, module) -> moduleOfSourceRoot.put(normalizePath(root), module));
+        }
     }
 
     /**
@@ -86,11 +105,21 @@ public final class SpringAnalyzer {
      * @return the Spring structure, or empty when the sources do not use Spring
      */
     public static Optional<SpringStructure> analyze(Collection<JavaFileStructure> files) {
-        return new SpringAnalyzer().run(files);
+        return new SpringAnalyzer(null).run(files);
+    }
+
+    /**
+     * @param files  parsed sources, before any visibility filtering
+     * @param layout modules, their dependencies, auto-configurations and configuration files
+     * @return the Spring structure with beans worked out per application, or empty when the sources do not use Spring
+     */
+    public static Optional<SpringStructure> analyze(Collection<JavaFileStructure> files, ProjectLayout layout) {
+        return new SpringAnalyzer(layout).run(files);
     }
 
     private Optional<SpringStructure> run(Collection<JavaFileStructure> files) {
-        files.forEach(file -> file.getTypes().forEach(type -> index(type, file.getPackageName(), sourceRoot(file))));
+        files.forEach(file -> file.getTypes().forEach(type -> index(type, file.getPackageName(), sourceRoot(file),
+                file.getImports() == null ? List.of() : file.getImports())));
         if (types.values().stream().noneMatch(l -> usesSpring(l.type()))) {
             return Optional.empty();
         }
@@ -103,14 +132,27 @@ public final class SpringAnalyzer {
 
         List<ConfigurationPropertiesStructure> properties = configurationProperties();
         declareBeans(properties);
+        otherPropertyReads();
         checkComponentScan(applications, componentScans());
-        resolveDependencies();
-        checkDuplicates();
-        checkCycles();
+        if (layout != null && !applications.isEmpty()) {
+            analyzeContexts(applications);
+        } else {
+            resolveDependencies();
+            checkDuplicates();
+            checkCycles();
+        }
         properties.stream().filter(p -> !p.isRegistered()).forEach(p -> issues.add(issue(BeanIssue.Severity.WARNING,
                 BeanIssue.Kind.UNREGISTERED_CONFIGURATION_PROPERTIES, null, p.getTypeName(),
                 simple(p.getTypeName()) + " has @ConfigurationProperties(\"" + p.getPrefix() + "\") but is never registered: "
                         + "add @EnableConfigurationProperties(" + simple(p.getTypeName()) + ".class), @ConfigurationPropertiesScan or @Component")));
+
+        List<ConfigurationFileStructure> configurationFiles = layout == null ? List.of() : layout.configurationFiles();
+        List<ConfigurationKey> configurationKeys = List.of();
+        if (layout != null) {
+            ConfigurationReport.Result report = ConfigurationReport.analyze(properties, propertyUsages, configurationFiles, layout.libraryKeys());
+            configurationKeys = report.keys();
+            issues.addAll(report.issues());
+        }
 
         issues.sort(Comparator.comparing(BeanIssue::getSeverity).thenComparing(i -> String.valueOf(i.getBeanName())));
         return Optional.of(SpringStructure.builder()
@@ -121,16 +163,18 @@ public final class SpringAnalyzer {
                 .configurationProperties(properties)
                 .propertyUsages(propertyUsages)
                 .entities(entities())
+                .configurationFiles(configurationFiles)
+                .configurationKeys(configurationKeys)
                 .issues(issues)
                 .build());
     }
 
     // ------------------------------------------------------------------ index
 
-    private void index(TypeStructure type, String packageName, String sourceRoot) {
-        types.put(type.getQualifiedName(), new Located(type, packageName, sourceRoot));
+    private void index(TypeStructure type, String packageName, String sourceRoot, List<ImportStructure> imports) {
+        types.put(type.getQualifiedName(), new Located(type, packageName, sourceRoot, imports));
         bySimpleName.computeIfAbsent(type.getName(), k -> new ArrayList<>()).add(type.getQualifiedName());
-        type.getNestedTypes().forEach(nested -> index(nested, packageName, sourceRoot));
+        type.getNestedTypes().forEach(nested -> index(nested, packageName, sourceRoot, imports));
     }
 
     /** The source directory a file's package lives in (e.g. .../core/src/main/java), "" when the path is unknown. */
@@ -331,7 +375,10 @@ public final class SpringAnalyzer {
                 .injectedInto(new ArrayList<>())
                 .inComponentScan(true)
                 .line(type.getStartLine())
+                .applications(new ArrayList<>())
+                .notes(new ArrayList<>())
                 .build();
+        origins.put(bean, new Origin(located, null));
         applyBeanAnnotations(bean, type.getAnnotations(), List.of());
         // Spring Data creates repositories; @ConfigurationProperties are bound from configuration, not injected
         boolean noInjection = kind == BeanKind.DATA_REPOSITORY || has(type.getAnnotations(), BOOT_PROPERTIES + "ConfigurationProperties");
@@ -358,7 +405,10 @@ public final class SpringAnalyzer {
                 .injectedInto(new ArrayList<>())
                 .inComponentScan(true)
                 .line(method.getStartLine())
+                .applications(new ArrayList<>())
+                .notes(new ArrayList<>())
                 .build();
+        origins.put(bean, new Origin(configuration, method));
         applyBeanAnnotations(bean, method.getAnnotations(), configuration.type().getAnnotations());
 
         List<InjectionPoint> dependencies = new ArrayList<>();
@@ -544,11 +594,11 @@ public final class SpringAnalyzer {
 
     /** Applies Spring's autowiring rules: type match, then @Qualifier, then @Primary, then parameter/field name. */
     private void resolveDependencies() {
-        Map<String, BeanDefinition> byName = beans.stream().collect(Collectors.toMap(BeanDefinition::getName, b -> b, (a, b) -> a));
+        Map<String, BeanDefinition> byName = scope.stream().collect(Collectors.toMap(BeanDefinition::getName, b -> b, (a, b) -> a));
         Map<String, List<BeanDefinition>> externalNeeds = new TreeMap<>();
-        for (BeanDefinition bean : beans) {
+        for (BeanDefinition bean : scope) {
             for (InjectionPoint point : bean.getDependencies()) {
-                List<BeanDefinition> candidates = beans.stream()
+                List<BeanDefinition> candidates = scope.stream()
                         .filter(b -> b != bean && b.getAssignableTo().stream().anyMatch(t -> sameType(t, point.getTypeName())))
                         .toList();
                 point.setCandidates(candidates.stream().map(BeanDefinition::getName).toList());
@@ -578,26 +628,32 @@ public final class SpringAnalyzer {
                 String where = bean.getName() + (point.getKind() == InjectionPoint.Kind.FIELD ? "." : " parameter ") + point.getName();
                 if (chosen.isEmpty() && point.isRequired() && !point.isCollection()) {
                     if (point.getQualifier() != null && !candidates.isEmpty()) {
-                        issues.add(issue(BeanIssue.Severity.ERROR, BeanIssue.Kind.UNSATISFIED_DEPENDENCY, bean.getName(), bean.getDeclaringType(),
+                        sink.add(issue(BeanIssue.Severity.ERROR, BeanIssue.Kind.UNSATISFIED_DEPENDENCY, bean.getName(), bean.getDeclaringType(),
                                 where + " needs " + simple(point.getTypeName()) + " qualified \"" + point.getQualifier()
                                         + "\", but the candidates are " + candidates.stream().map(BeanDefinition::getName).toList()));
+                    } else if (leftOut != null && leftOutMatching(point.getTypeName()).isPresent()) {
+                        Map.Entry<BeanDefinition, String> absent = leftOutMatching(point.getTypeName()).get();
+                        boolean byCondition = absent.getValue().startsWith("@") || absent.getValue().startsWith("backs off");
+                        sink.add(issue(byCondition ? BeanIssue.Severity.WARNING : BeanIssue.Severity.ERROR, BeanIssue.Kind.UNSATISFIED_DEPENDENCY,
+                                bean.getName(), bean.getDeclaringType(), where + " needs a bean of type " + simple(point.getTypeName())
+                                        + ", but " + describe(absent.getKey()) + " is not in this application: " + absent.getValue()));
                     } else if (lookup(simple(point.getTypeName()), point.getTypeName().contains(".") ? point.getTypeName() : null) != null) {
-                        issues.add(issue(BeanIssue.Severity.ERROR, BeanIssue.Kind.UNSATISFIED_DEPENDENCY, bean.getName(), bean.getDeclaringType(),
+                        sink.add(issue(BeanIssue.Severity.ERROR, BeanIssue.Kind.UNSATISFIED_DEPENDENCY, bean.getName(), bean.getDeclaringType(),
                                 where + " needs a bean of type " + simple(point.getTypeName()) + ", but none is declared"
                                         + " (missing @Component/@Service, or a @Bean method?)"));
                     } else if (!byName.containsKey(point.getName())) {
                         externalNeeds.computeIfAbsent(point.getTypeName(), k -> new ArrayList<>()).add(bean);
                     }
                 } else if (chosen.size() > 1 && !point.isCollection()) {
-                    boolean exclusive = chosen.stream().anyMatch(b -> !b.getProfiles().isEmpty() || !b.getConditions().isEmpty());
-                    issues.add(issue(exclusive ? BeanIssue.Severity.WARNING : BeanIssue.Severity.ERROR, BeanIssue.Kind.AMBIGUOUS_DEPENDENCY,
+                    boolean exclusive = chosen.stream().anyMatch(this::conditional);
+                    sink.add(issue(exclusive ? BeanIssue.Severity.WARNING : BeanIssue.Severity.ERROR, BeanIssue.Kind.AMBIGUOUS_DEPENDENCY,
                             bean.getName(), bean.getDeclaringType(), where + " matches " + chosen.size() + " " + simple(point.getTypeName())
                                     + " beans " + chosen.stream().map(BeanDefinition::getName).toList()
                                     + (exclusive ? "; fine only if their profiles/conditions never overlap" : "; add @Primary to one or @Qualifier here")));
                 }
             }
         }
-        externalNeeds.forEach((type, needing) -> issues.add(issue(BeanIssue.Severity.INFO, BeanIssue.Kind.EXTERNAL_DEPENDENCY, null, type,
+        externalNeeds.forEach((type, needing) -> sink.add(issue(BeanIssue.Severity.INFO, BeanIssue.Kind.EXTERNAL_DEPENDENCY, null, type,
                 simple(type) + " is not declared in this project; it must come from auto-configuration or a library (needed by "
                         + needing.stream().map(BeanDefinition::getName).distinct().collect(Collectors.joining(", ")) + ")")));
     }
@@ -634,18 +690,18 @@ public final class SpringAnalyzer {
 
     private void checkDuplicates() {
         Map<String, List<BeanDefinition>> byName = new TreeMap<>();
-        for (BeanDefinition bean : beans) {
+        for (BeanDefinition bean : scope) {
             Stream.concat(Stream.of(bean.getName()), bean.getAliases().stream())
                     .forEach(name -> byName.computeIfAbsent(name, k -> new ArrayList<>()).add(bean));
         }
         byName.forEach((name, defined) -> {
             if (defined.size() > 1) {
                 // Only certain when they share one source tree and none is conditional; otherwise they may never meet.
-                boolean oneSourceTree = defined.stream().map(b -> types.get(b.getDeclaringType()).sourceRoot()).distinct().count() == 1;
-                boolean conditional = defined.stream().anyMatch(b -> !b.getConditions().isEmpty() || !b.getProfiles().isEmpty());
+                boolean oneSourceTree = uncertain != null || defined.stream().map(b -> types.get(b.getDeclaringType()).sourceRoot()).distinct().count() == 1;
+                boolean conditional = defined.stream().anyMatch(this::conditional);
                 String caveat = !oneSourceTree ? " if they end up in the same application context (they are in different modules)"
                         : conditional ? " unless their conditions or profiles exclude each other" : "";
-                issues.add(issue(oneSourceTree && !conditional ? BeanIssue.Severity.ERROR : BeanIssue.Severity.WARNING,
+                sink.add(issue(oneSourceTree && !conditional ? BeanIssue.Severity.ERROR : BeanIssue.Severity.WARNING,
                         BeanIssue.Kind.DUPLICATE_BEAN_NAME, name, defined.getFirst().getDeclaringType(),
                         "Bean name \"" + name + "\" is defined " + defined.size() + " times (" + defined.stream()
                                 .map(b -> simple(b.getDeclaringType()) + (b.getDeclaringMember() != null ? "." + b.getDeclaringMember() + "()" : ""))
@@ -656,9 +712,9 @@ public final class SpringAnalyzer {
 
     /** Cycles through resolved dependencies (Tarjan's strongly connected components). */
     private void checkCycles() {
-        Map<String, BeanDefinition> byName = beans.stream().collect(Collectors.toMap(BeanDefinition::getName, b -> b, (a, b) -> a));
+        Map<String, BeanDefinition> byName = scope.stream().collect(Collectors.toMap(BeanDefinition::getName, b -> b, (a, b) -> a));
         Map<String, List<InjectionPoint>> edges = new HashMap<>();
-        for (BeanDefinition bean : beans) {
+        for (BeanDefinition bean : scope) {
             edges.put(bean.getName(), bean.getDependencies().stream()
                     .filter(p -> p.getResolvedTo() != null && !p.isCollection()).toList());
         }
@@ -706,13 +762,417 @@ public final class SpringAnalyzer {
                 boolean constructorOnly = component.stream().flatMap(n -> edges.get(n).stream())
                         .filter(e -> component.contains(e.getResolvedTo()))
                         .allMatch(e -> e.getKind() == InjectionPoint.Kind.CONSTRUCTOR || e.getKind() == InjectionPoint.Kind.BEAN_METHOD_PARAMETER);
-                issues.add(issue(BeanIssue.Severity.ERROR, BeanIssue.Kind.CIRCULAR_DEPENDENCY, component.getFirst(),
+                sink.add(issue(BeanIssue.Severity.ERROR, BeanIssue.Kind.CIRCULAR_DEPENDENCY, component.getFirst(),
                         byName.get(component.getFirst()).getDeclaringType(),
                         "Circular dependency: " + String.join(" -> ", component) + " -> " + component.getFirst()
                                 + (constructorOnly ? " (constructor injection: cannot be created at all)"
                                 : " (fails on Spring Boot 2.6+ unless spring.main.allow-circular-references=true; consider @Lazy)")));
             }
         }
+    }
+
+    // ------------------------------------------------------------ contexts
+
+    /** Where a bean comes from: its class, plus the @Bean method for method beans. */
+    private record Origin(Located declaring, MethodStructure method) {
+    }
+
+    /** Result of evaluating a bean's conditions in one context: why it is left out (null when it is in), and whether that is certain. */
+    private record Verdict(String excludedBecause, boolean unsure) {
+    }
+
+    /** One application's context: its beans in registration order, those whose conditions could not be settled, and the beans left out. */
+    private record Context(List<BeanDefinition> beans, Set<BeanDefinition> uncertain, Map<BeanDefinition, String> leftOut) {
+    }
+
+    /**
+     * Checks wiring once per application, on copies of the beans its context holds, then merges the
+     * results: issues are tagged with the applications they occur in, and each bean records which
+     * contexts include it and why others leave it out.
+     */
+    private void analyzeContexts(List<SpringApplicationStructure> applications) {
+        // Links over all beans first, so beans no application includes still show what they would inject.
+        // Their problems are not reported: no context in this build would hit them.
+        sink = new ArrayList<>();
+        resolveDependencies();
+
+        Map<String, BeanIssue> merged = new LinkedHashMap<>();
+        Set<BeanDefinition> linked = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (SpringApplicationStructure application : applications) {
+            Context context = context(application);
+            Map<BeanDefinition, BeanDefinition> originals = new IdentityHashMap<>(); // copy -> bean
+            List<BeanDefinition> copies = new ArrayList<>();
+            for (BeanDefinition bean : context.beans()) {
+                BeanDefinition copy = bean.toBuilder()
+                        .dependencies(bean.getDependencies().stream()
+                                .map(p -> p.toBuilder().candidates(new ArrayList<>()).resolvedTo(null).build()).toList())
+                        .injectedInto(new ArrayList<>())
+                        .build();
+                originals.put(copy, bean);
+                copies.add(copy);
+            }
+            scope = copies;
+            uncertain = Collections.newSetFromMap(new IdentityHashMap<>());
+            copies.stream().filter(c -> context.uncertain().contains(originals.get(c))).forEach(uncertain::add);
+            leftOut = context.leftOut();
+            sink = new ArrayList<>();
+            resolveDependencies();
+            checkDuplicates();
+            checkCycles();
+
+            for (BeanIssue issue : sink) {
+                String key = issue.getKind() + "|" + issue.getBeanName() + "|" + issue.getTypeName() + "|" + issue.getMessage();
+                merged.computeIfAbsent(key, k -> issue).getApplications().add(application.getTypeName());
+            }
+            for (BeanDefinition copy : copies) {
+                BeanDefinition bean = originals.get(copy);
+                bean.getApplications().add(application.getTypeName());
+                boolean first = linked.add(bean);
+                if (first) {
+                    bean.setInjectedInto(new ArrayList<>());
+                }
+                copy.getInjectedInto().stream().filter(n -> !bean.getInjectedInto().contains(n)).forEach(bean.getInjectedInto()::add);
+                for (int i = 0; i < copy.getDependencies().size(); i++) {
+                    InjectionPoint from = copy.getDependencies().get(i);
+                    InjectionPoint to = bean.getDependencies().get(i);
+                    if (first) {
+                        to.setCandidates(new ArrayList<>(from.getCandidates()));
+                        to.setResolvedTo(from.getResolvedTo());
+                    } else {
+                        from.getCandidates().stream().filter(c -> !to.getCandidates().contains(c)).forEach(to.getCandidates()::add);
+                        if (to.getResolvedTo() == null) {
+                            to.setResolvedTo(from.getResolvedTo());
+                        }
+                    }
+                }
+            }
+            application.setBeanCount(copies.size());
+        }
+        scope = beans;
+        sink = issues;
+        uncertain = null;
+        leftOut = null;
+        issues.addAll(merged.values());
+    }
+
+    /** The beans an application's context would hold, in the order Spring registers them: its own first, then auto-configured. */
+    private Context context(SpringApplicationStructure application) {
+        Located main = types.get(application.getTypeName());
+        String module = moduleOf(main);
+        Set<String> modules = closure(module); // null: unknown, everything is on the classpath
+        application.setModuleId(module);
+        application.setModules(modules == null ? List.of() : new ArrayList<>(modules));
+
+        List<ConfigurationFileStructure> files = layout.configurationFiles().stream()
+                .filter(f -> module != null && module.equals(f.getModuleId())).toList();
+        List<String> active = splitList(ConfigurationFiles.effectiveValues(files, List.of()).get(ConfigurationFiles.canonical("spring.profiles.active")));
+        Map<String, String> values = ConfigurationFiles.effectiveValues(files, active);
+        application.setActiveProfiles(active);
+
+        List<String> autoConfigurations = new ArrayList<>();
+        for (String m : modules == null ? layout.autoConfigurations().keySet() : modules) {
+            for (String name : layout.autoConfigurations().getOrDefault(m, List.of())) {
+                boolean excluded = application.getExcludedAutoConfigurations().stream().anyMatch(e -> sameType(e, name));
+                if (types.containsKey(name) && !excluded && !autoConfigurations.contains(name)) {
+                    autoConfigurations.add(name);
+                }
+            }
+        }
+        application.setAutoConfigurations(autoConfigurations);
+
+        // The classes the context takes in: what it scans, what those import, and the auto-configurations with
+        // what they import. Scans can widen as configurations are taken in, so repeat until nothing new turns up.
+        Set<String> scanPackages = new LinkedHashSet<>(application.getScanPackages());
+        Set<String> included = new LinkedHashSet<>();
+        Set<String> auto = new HashSet<>(autoConfigurations);
+        Set<String> enabledProperties = new HashSet<>();
+        Set<String> propertyScans = new LinkedHashSet<>();
+        Deque<String> pending = new ArrayDeque<>();
+        pending.add(application.getTypeName());
+        pending.addAll(autoConfigurations);
+        boolean grew = true;
+        while (grew) {
+            grew = false;
+            for (Located located : types.values()) {
+                TypeStructure type = located.type();
+                if (type.getKind() != TypeKind.ANNOTATION && type.getKind() != TypeKind.INTERFACE && !included.contains(type.getQualifiedName())
+                        && inModules(located, modules) && stereotypeOf(type.getAnnotations()).isPresent()
+                        && scanPackages.stream().anyMatch(p -> inPackage(located.packageName(), p))) {
+                    pending.add(type.getQualifiedName());
+                }
+            }
+            while (!pending.isEmpty()) {
+                String name = pending.poll();
+                Located located = types.get(name);
+                if (located == null || !included.add(name)) {
+                    continue;
+                }
+                grew = true;
+                boolean fromAuto = auto.contains(name);
+                for (AnnotationStructure annotation : withMetaAnnotations(located.type().getAnnotations())) {
+                    if (is(annotation, CONTEXT + "Import")) {
+                        classes(annotation, "value").forEach(c -> resolveTypeName(c, located).ifPresent(imported -> {
+                            pending.add(imported);
+                            if (fromAuto) {
+                                auto.add(imported);
+                            }
+                        }));
+                    } else if (is(annotation, CONTEXT + "ComponentScan")) {
+                        List<String> declared = new ArrayList<>(strings(annotation, "basePackages", "value"));
+                        classes(annotation, "basePackageClasses").forEach(c -> packageOfClass(c, located).ifPresent(declared::add));
+                        scanPackages.addAll(declared.isEmpty() ? List.of(located.packageName()) : declared);
+                    } else if (is(annotation, BOOT_PROPERTIES + "EnableConfigurationProperties")) {
+                        classes(annotation, "value").forEach(c -> resolveTypeName(c, located).ifPresent(enabledProperties::add));
+                    } else if (is(annotation, BOOT_PROPERTIES + "ConfigurationPropertiesScan")) {
+                        List<String> declared = strings(annotation, "value", "basePackages");
+                        propertyScans.addAll(declared.isEmpty() ? List.of(located.packageName()) : declared);
+                    }
+                }
+                // nested @Configuration classes are registered with their enclosing configuration
+                for (TypeStructure nested : located.type().getNestedTypes()) {
+                    if (stereotypeOf(nested.getAnnotations()).orElse(null) == BeanKind.CONFIGURATION) {
+                        pending.add(nested.getQualifiedName());
+                        if (fromAuto) {
+                            auto.add(nested.getQualifiedName());
+                        }
+                    }
+                }
+            }
+        }
+
+        Map<String, Integer> order = new HashMap<>();
+        included.forEach(name -> order.put(name, order.size()));
+        List<BeanDefinition> candidates = new ArrayList<>();
+        Map<BeanDefinition, String> leftOut = new IdentityHashMap<>();
+        for (BeanDefinition bean : beans) {
+            Located declaring = types.get(bean.getDeclaringType());
+            if (!inModules(declaring, modules)) {
+                leftOut.put(bean, "its module " + moduleOf(declaring) + " is not a dependency of " + module);
+                continue;
+            }
+            boolean in = switch (bean.getKind()) {
+                case DATA_REPOSITORY -> scanPackages.stream().anyMatch(p -> inPackage(declaring.packageName(), p));
+                case CONFIGURATION_PROPERTIES -> enabledProperties.contains(bean.getTypeName())
+                        || propertyScans.stream().anyMatch(p -> inPackage(declaring.packageName(), p));
+                default -> included.contains(bean.getDeclaringType());
+            };
+            if (in) {
+                candidates.add(bean);
+            } else {
+                leftOut.put(bean, "it is neither component-scanned nor imported (scanned packages: " + scanPackages + ")");
+            }
+        }
+        // Spring registers the application's own beans first; auto-configurations come after and back off from them.
+        candidates.sort(Comparator.comparing((BeanDefinition b) -> auto.contains(b.getDeclaringType()))
+                .thenComparing(b -> order.getOrDefault(b.getDeclaringType(), -1)));
+
+        Set<String> profiles = active.isEmpty() ? null : new HashSet<>(active); // null: chosen at deployment
+        String label = simple(application.getTypeName());
+        List<BeanDefinition> accepted = new ArrayList<>();
+        Set<BeanDefinition> unsure = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (BeanDefinition bean : candidates) {
+            bean.setAutoConfigured(bean.isAutoConfigured() || auto.contains(bean.getDeclaringType()));
+            Origin origin = origins.get(bean);
+            List<BeanDefinition> possible = candidates.stream().filter(b -> !leftOut.containsKey(b) && b != bean).toList();
+            Verdict verdict = evaluate(withMetaAnnotations(origin.declaring().type().getAnnotations()), false, bean, accepted, possible, values, profiles);
+            if (verdict.excludedBecause() == null && origin.method() != null) {
+                Verdict method = evaluate(withMetaAnnotations(origin.method().getAnnotations()), true, bean, accepted, possible, values, profiles);
+                verdict = new Verdict(method.excludedBecause(), verdict.unsure() || method.unsure());
+            }
+            if (verdict.excludedBecause() != null) {
+                leftOut.put(bean, verdict.excludedBecause());
+                note(bean, label + ": " + verdict.excludedBecause());
+                continue;
+            }
+            if (verdict.unsure()) {
+                unsure.add(bean);
+            }
+            accepted.add(bean);
+        }
+        return new Context(accepted, unsure, leftOut);
+    }
+
+    /**
+     * Evaluates the conditions Spring would check before registering a bean. {@code @Profile},
+     * {@code @ConditionalOnProperty} and {@code @ConditionalOn(Missing)Bean} are decided; anything
+     * else (classes on the classpath, web application type, custom conditions) is assumed to hold.
+     *
+     * @param registered beans registered before this one (what @ConditionalOnMissingBean sees)
+     * @param possible   beans this context may still hold (what @ConditionalOnBean is checked against)
+     * @param profiles   active profiles, null when the configuration files do not set any
+     */
+    private Verdict evaluate(List<AnnotationStructure> annotations, boolean onMethod, BeanDefinition bean, List<BeanDefinition> registered,
+                             List<BeanDefinition> possible, Map<String, String> values, Set<String> profiles) {
+        boolean unsure = false;
+        Located declaring = origins.get(bean).declaring();
+        for (AnnotationStructure annotation : annotations) {
+            String name = annotation.getName();
+            if (is(annotation, CONTEXT + "Profile")) {
+                List<String> expressions = strings(annotation, "value");
+                if (expressions.isEmpty()) {
+                    continue;
+                }
+                if (profiles == null) {
+                    unsure = true; // no profile is configured: which one runs is decided at deployment
+                } else if (expressions.stream().noneMatch(e -> profileMatches(e, profiles))) {
+                    return new Verdict("@Profile(" + String.join(", ", expressions) + ") is not active (active: " + String.join(", ", profiles) + ")", false);
+                }
+            } else if (name.equals("ConditionalOnProperty")) {
+                String prefix = strings(annotation, "prefix").stream().findFirst().map(p -> p.endsWith(".") ? p : p + ".").orElse("");
+                String having = strings(annotation, "havingValue").stream().findFirst().orElse("");
+                boolean matchIfMissing = attribute(annotation, "matchIfMissing").map(v -> v.strip().equals("true")).orElse(false);
+                for (String property : strings(annotation, "name", "value")) {
+                    String key = prefix + property;
+                    String value = values.get(ConfigurationFiles.canonical(key));
+                    if (value != null && value.contains("${")) {
+                        unsure = true; // set from the environment
+                        continue;
+                    }
+                    boolean matches = value == null ? matchIfMissing
+                            : having.isEmpty() ? !value.equalsIgnoreCase("false") : having.equalsIgnoreCase(value.strip());
+                    if (!matches) {
+                        return new Verdict("@ConditionalOnProperty(" + key + (having.isEmpty() ? "" : " = " + having) + ") does not match: "
+                                + (value == null ? "it is not set" : "it is " + value), false);
+                    }
+                }
+            } else if (name.equals("ConditionalOnMissingBean") || name.equals("ConditionalOnBean") || name.equals("ConditionalOnSingleCandidate")) {
+                List<String> wanted = new ArrayList<>(classes(annotation, "value"));
+                wanted.addAll(strings(annotation, "type"));
+                List<String> beanNames = strings(annotation, "name");
+                if (wanted.isEmpty() && beanNames.isEmpty()) {
+                    if (!onMethod) {
+                        unsure = true;
+                        continue;
+                    }
+                    wanted.add(bean.getTypeName()); // on a @Bean method: the type it returns
+                }
+                List<String> types = wanted.stream().map(t -> resolveTypeName(t, declaring).orElse(t)).toList();
+                boolean missing = name.equals("ConditionalOnMissingBean");
+                List<BeanDefinition> found = (missing ? registered : possible).stream()
+                        .filter(b -> beanNames.contains(b.getName())
+                                || types.stream().anyMatch(t -> b.getAssignableTo().stream().anyMatch(a -> sameType(a, t))))
+                        .toList();
+                if (missing && !found.isEmpty()) {
+                    return new Verdict("backs off (@ConditionalOnMissingBean): " + describe(found.getFirst()) + " is already defined", false);
+                }
+                if (!missing && found.isEmpty()) {
+                    boolean projectTypes = beanNames.isEmpty() && types.stream().allMatch(t -> lookup(simple(t), t.contains(".") ? t : null) != null);
+                    if (!projectTypes) {
+                        unsure = true; // the bean may come from a library
+                        continue;
+                    }
+                    return new Verdict("@" + name + "(" + types.stream().map(SpringAnalyzer::simple).collect(Collectors.joining(", "))
+                            + ") does not match: no such bean in this application", false);
+                }
+            } else if (name.startsWith("ConditionalOn") || name.equals("Conditional")) {
+                unsure = true;
+            }
+        }
+        return new Verdict(null, unsure);
+    }
+
+    /** A profile expression: a name, !name, or names joined with &amp; or |. */
+    static boolean profileMatches(String expression, Set<String> active) {
+        String e = expression.strip();
+        if (e.contains("|")) {
+            return Arrays.stream(e.split("\\|")).anyMatch(p -> profileMatches(p, active));
+        }
+        if (e.contains("&")) {
+            return Arrays.stream(e.split("&")).allMatch(p -> profileMatches(p, active));
+        }
+        e = e.replace("(", "").replace(")", "").strip();
+        return e.startsWith("!") ? !profileMatches(e.substring(1), active) : active.contains(e);
+    }
+
+    /** Whether a bean may be absent at runtime for reasons the analysis could not settle. */
+    private boolean conditional(BeanDefinition bean) {
+        return uncertain != null ? uncertain.contains(bean) : !bean.getProfiles().isEmpty() || !bean.getConditions().isEmpty();
+    }
+
+    /** A bean of the type that the current context leaves out, with why. */
+    private Optional<Map.Entry<BeanDefinition, String>> leftOutMatching(String typeName) {
+        return leftOut.entrySet().stream()
+                .filter(e -> e.getKey().getAssignableTo().stream().anyMatch(t -> sameType(t, typeName)))
+                .min(Comparator.comparing(e -> e.getKey().getName()));
+    }
+
+    /** Annotations plus those on project annotations among them (e.g. what a company @MyApplication carries), transitively. */
+    private List<AnnotationStructure> withMetaAnnotations(List<AnnotationStructure> annotations) {
+        List<AnnotationStructure> result = new ArrayList<>();
+        Set<String> visited = new HashSet<>();
+        Deque<AnnotationStructure> pending = new ArrayDeque<>(annotations);
+        while (!pending.isEmpty()) {
+            AnnotationStructure annotation = pending.poll();
+            result.add(annotation);
+            Located type = lookup(annotation.getName(), annotation.getQualifiedName());
+            if (type != null && type.type().getKind() == TypeKind.ANNOTATION && visited.add(type.type().getQualifiedName())) {
+                pending.addAll(type.type().getAnnotations());
+            }
+        }
+        return result;
+    }
+
+    private String moduleOf(Located located) {
+        if (located == null || moduleOfSourceRoot.isEmpty()) {
+            return null;
+        }
+        String root = normalizePath(located.sourceRoot());
+        String best = null;
+        String module = null;
+        for (Map.Entry<String, String> entry : moduleOfSourceRoot.entrySet()) {
+            String key = entry.getKey();
+            if ((root.equals(key) || root.startsWith(key + "/")) && (best == null || key.length() > best.length())) {
+                best = key;
+                module = entry.getValue();
+            }
+        }
+        return module;
+    }
+
+    /** The module and every build module it depends on, transitively; null when the module is unknown. */
+    private Set<String> closure(String module) {
+        if (module == null) {
+            return null;
+        }
+        Set<String> result = new LinkedHashSet<>();
+        Deque<String> pending = new ArrayDeque<>(List.of(module));
+        while (!pending.isEmpty()) {
+            String next = pending.poll();
+            if (result.add(next)) {
+                pending.addAll(layout.moduleDependencies().getOrDefault(next, List.of()));
+            }
+        }
+        return result;
+    }
+
+    private boolean inModules(Located located, Set<String> modules) {
+        if (modules == null || located == null) {
+            return true;
+        }
+        String module = moduleOf(located);
+        return module == null || modules.contains(module);
+    }
+
+    private static String normalizePath(String path) {
+        String normalized = path.replace('\\', '/').toLowerCase(Locale.ROOT);
+        return normalized.endsWith("/") ? normalized.substring(0, normalized.length() - 1) : normalized;
+    }
+
+    private static List<String> splitList(String value) {
+        if (value == null || value.isBlank() || value.contains("${")) {
+            return List.of();
+        }
+        return Arrays.stream(value.split(",")).map(String::strip).filter(s -> !s.isEmpty()).toList();
+    }
+
+    private static void note(BeanDefinition bean, String note) {
+        if (!bean.getNotes().contains(note)) {
+            bean.getNotes().add(note);
+        }
+    }
+
+    private static String describe(BeanDefinition bean) {
+        return bean.getDeclaringMember() != null ? simple(bean.getDeclaringType()) + "." + bean.getDeclaringMember() + "()" : simple(bean.getDeclaringType());
     }
 
     // --------------------------------------------------------------- web
@@ -865,6 +1325,8 @@ public final class SpringAnalyzer {
                             .expression(literal)
                             .typeName(typeName)
                             .memberName(member)
+                            .source("@Value")
+                            .required(colon < 0)
                             .build();
                     if (propertyUsages.stream().noneMatch(u -> u.getKey().equals(key) && u.getTypeName().equals(typeName)
                             && Objects.equals(u.getMemberName(), member))) {
@@ -874,6 +1336,59 @@ public final class SpringAnalyzer {
                 }
             }
         });
+    }
+
+    private static final java.util.regex.Pattern ENVIRONMENT_READ = java.util.regex.Pattern.compile(
+            "\\.get(Required)?Property\\(\\s*\"([^\"]+)\"\\s*(?:,\\s*([^)]*))?\\)");
+
+    /** Keys read by @ConditionalOnProperty and by Environment.getProperty / getRequiredProperty calls with a literal key. */
+    private void otherPropertyReads() {
+        for (Located located : types.values()) {
+            TypeStructure type = located.type();
+            conditionReads(type.getAnnotations(), type.getQualifiedName(), null);
+            for (MethodStructure method : type.getMethods()) {
+                conditionReads(method.getAnnotations(), type.getQualifiedName(), method.getName());
+                environmentReads(method.getBody(), type.getQualifiedName(), method.getName());
+            }
+            for (ConstructorStructure constructor : type.getConstructors()) {
+                environmentReads(constructor.getBody(), type.getQualifiedName(), type.getName());
+            }
+        }
+    }
+
+    private void conditionReads(List<AnnotationStructure> annotations, String typeName, String member) {
+        for (AnnotationStructure annotation : annotations) {
+            if (!annotation.getName().equals("ConditionalOnProperty")) {
+                continue;
+            }
+            String prefix = strings(annotation, "prefix").stream().findFirst().map(p -> p.endsWith(".") ? p : p + ".").orElse("");
+            boolean matchIfMissing = attribute(annotation, "matchIfMissing").map(v -> v.strip().equals("true")).orElse(false);
+            for (String name : strings(annotation, "name", "value")) {
+                addUsage(PropertyUsage.builder().key(prefix + name).defaultValue(matchIfMissing ? "(matches when missing)" : null)
+                        .expression(Annotations.display(annotation)).typeName(typeName).memberName(member)
+                        .source("@ConditionalOnProperty").build());
+            }
+        }
+    }
+
+    private void environmentReads(String body, String typeName, String member) {
+        if (body == null || !body.contains("Property(")) {
+            return;
+        }
+        java.util.regex.Matcher matcher = ENVIRONMENT_READ.matcher(body);
+        while (matcher.find()) {
+            String second = matcher.group(3) == null ? null : matcher.group(3).strip();
+            String defaultValue = second != null && second.startsWith("\"") && second.endsWith("\"") ? second.substring(1, second.length() - 1) : null;
+            addUsage(PropertyUsage.builder().key(matcher.group(2)).defaultValue(defaultValue).expression(matcher.group().substring(1))
+                    .typeName(typeName).memberName(member).source("Environment").required(matcher.group(1) != null).build());
+        }
+    }
+
+    private void addUsage(PropertyUsage usage) {
+        if (propertyUsages.stream().noneMatch(u -> u.getKey().equals(usage.getKey()) && u.getTypeName().equals(usage.getTypeName())
+                && Objects.equals(u.getMemberName(), usage.getMemberName()))) {
+            propertyUsages.add(usage);
+        }
     }
 
     // ------------------------------------------------------------ entities
@@ -937,6 +1452,20 @@ public final class SpringAnalyzer {
         String samePackage = context.packageName().isEmpty() ? written : context.packageName() + "." + written;
         if (types.containsKey(samePackage)) {
             return Optional.of(samePackage);
+        }
+        // the file's imports: single-type first, then on-demand (Outer.Inner resolves through Outer)
+        String first = written.contains(".") ? written.substring(0, written.indexOf('.')) : written;
+        String rest = written.substring(first.length());
+        for (ImportStructure imported : context.imports()) {
+            if (!imported.isStatic() && !imported.isWildcard() && imported.getQualifiedName().endsWith("." + first)) {
+                return Optional.of(imported.getQualifiedName() + rest);
+            }
+        }
+        for (ImportStructure imported : context.imports()) {
+            String onDemand = imported.getQualifiedName().replaceAll("\\.\\*$", "") + "." + written;
+            if (!imported.isStatic() && imported.isWildcard() && types.containsKey(onDemand)) {
+                return Optional.of(onDemand);
+            }
         }
         Located unique = lookup(simple(written), null);
         return Optional.ofNullable(unique).map(l -> l.type().getQualifiedName());
@@ -1006,6 +1535,7 @@ public final class SpringAnalyzer {
     }
 
     private static BeanIssue issue(BeanIssue.Severity severity, BeanIssue.Kind kind, String bean, String type, String message) {
-        return BeanIssue.builder().severity(severity).kind(kind).beanName(bean).typeName(type).message(message).build();
+        return BeanIssue.builder().severity(severity).kind(kind).beanName(bean).typeName(type).message(message)
+                .applications(new ArrayList<>()).build();
     }
 }

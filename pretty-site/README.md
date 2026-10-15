@@ -22,7 +22,7 @@ The data shape is defined by the plugin's `DocumentationSite` model and mirrored
 
 ```shell
 # 1. Generate data for any project
-mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.0.1:generate
+mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.1.0:generate
 # 2. Use it in the dev server
 cp target/pretty-docs/docs-data.js pretty-site/public/
 cd pretty-site && npm run dev

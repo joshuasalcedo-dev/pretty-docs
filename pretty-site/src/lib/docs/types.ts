@@ -1,7 +1,7 @@
 // Mirrors the JSON written by pretty-docs-maven-plugin (DocumentationSite, schema version 1).
 // Gson omits null fields, so anything that can be null in Java is optional here.
 
-export const SUPPORTED_SCHEMA_VERSION = 1
+export const SUPPORTED_SCHEMA_VERSION = 2
 
 export type ModifierKind =
   | "PUBLIC"
@@ -148,6 +148,8 @@ export interface RecordComponent {
 }
 
 export interface TypeStructure {
+  /** True in the outline docs-data.js holds: members carry names and signatures only. */
+  outline?: boolean
   name: string
   qualifiedName: string
   kind: TypeKind
@@ -251,6 +253,8 @@ export interface ModuleDocumentation {
   testFiles: JavaFile[]
   statistics: ModuleStatistics
   readmeHtml?: string
+  /** Script with the module's full sources; until it is loaded, files hold an outline (see lib/docs/module-data.ts). */
+  dataScript?: string
 }
 
 export interface DocumentationSite {
@@ -276,6 +280,7 @@ export interface ExternalDocumentation {
 declare global {
   interface Window {
     __PRETTY_DOCS__?: DocumentationSite
+    __PRETTY_DOCS_MODULES__?: Record<string, { files: JavaFile[]; testFiles: JavaFile[] }>
   }
 }
 
@@ -322,6 +327,9 @@ export interface BeanDefinition {
   injectedInto: string[]
   inComponentScan: boolean
   line: number
+  autoConfigured?: boolean
+  applications?: string[] // contexts that include it; empty when not worked out per application
+  notes?: string[] // why other applications leave it out, or why it backs off
 }
 
 export interface EndpointStructure {
@@ -343,10 +351,69 @@ export interface BeanIssue {
   message: string
   beanName?: string
   typeName?: string
+  applications?: string[] // contexts it occurs in; empty when it does not depend on one
+  file?: string
+  line?: number
+}
+
+export interface SpringApplication {
+  typeName: string
+  hasMainMethod: boolean
+  scanPackages: string[]
+  excludedAutoConfigurations: string[]
+  moduleId?: string
+  modules?: string[]
+  activeProfiles?: string[]
+  autoConfigurations?: string[]
+  beanCount?: number
+}
+
+export interface PropertyUsage {
+  key: string
+  defaultValue?: string
+  expression: string
+  typeName: string
+  memberName?: string
+  source?: "@Value" | "@ConditionalOnProperty" | "Environment"
+  required?: boolean
+}
+
+export interface ConfigurationEntry {
+  key: string
+  value: string
+  line: number
+  profile?: string
+  comment?: string
+  environmentVariable?: string
+  placeholderDefault?: string
+}
+
+export interface ConfigurationFile {
+  moduleId: string
+  path: string
+  fileName: string
+  format: "yaml" | "properties"
+  profile?: string
+  content: string
+  entries: ConfigurationEntry[]
+}
+
+export type ConfigurationKeyStatus = "PROJECT" | "LIBRARY" | "UNKNOWN" | "UNCHECKED"
+
+export interface ConfigurationKey {
+  key: string
+  status: ConfigurationKeyStatus
+  description?: string
+  typeName?: string
+  defaultValue?: string
+  deprecated: boolean
+  boundTo: string[]
+  values: { moduleId: string; path: string; profile?: string; line: number; value: string }[]
+  suggestion?: string
 }
 
 export interface SpringStructure {
-  applications: { typeName: string; hasMainMethod: boolean; scanPackages: string[]; excludedAutoConfigurations: string[] }[]
+  applications: SpringApplication[]
   scanPackages: string[]
   beans: BeanDefinition[]
   endpoints: EndpointStructure[]
@@ -356,8 +423,10 @@ export interface SpringStructure {
     registered: boolean
     properties: { key: string; typeName: string; defaultValue?: string; description?: string }[]
   }[]
-  propertyUsages: { key: string; defaultValue?: string; expression: string; typeName: string; memberName?: string }[]
+  propertyUsages: PropertyUsage[]
   entities: { typeName: string; entityName: string; tableName?: string; idField?: string }[]
+  configurationFiles?: ConfigurationFile[]
+  configurationKeys?: ConfigurationKey[]
   issues: BeanIssue[]
 }
 

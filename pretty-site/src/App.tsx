@@ -16,8 +16,10 @@ import { Button } from "@/components/ui/button"
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { Separator } from "@/components/ui/separator"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { DocsContext } from "@/lib/docs/context"
+import { useModuleDataVersion, useModules } from "@/lib/docs/module-data"
 import { buildIndex, displayName, moduleName, routes, type DocsIndex } from "@/lib/docs/model"
 import { SUPPORTED_SCHEMA_VERSION } from "@/lib/docs/types"
 import { useRoute, type Route } from "@/lib/router"
@@ -29,7 +31,10 @@ import { TypePage } from "@/pages/type-page"
 
 export function App() {
   const site = window.__PRETTY_DOCS__
-  const index = useMemo(() => (site ? buildIndex(site) : null), [site])
+  // Rebuilt when a module's full sources arrive (see lib/docs/module-data.ts).
+  const dataVersion = useModuleDataVersion()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const index = useMemo(() => (site ? buildIndex(site) : null), [site, dataVersion])
 
   if (!site || !index) {
     return (
@@ -98,6 +103,26 @@ function Docs({ index }: { index: DocsIndex }) {
 }
 
 function Page({ route, index }: { route: Route; index: DocsIndex }) {
+  // Module, package and type pages need the module's full sources, not just the outline.
+  const moduleId =
+    route.page === "home" ? index.root?.id
+      : route.page === "module" || route.page === "package" ? route.moduleId
+        : route.page === "type" ? index.types.get(route.qualifiedName)?.module.id
+          : undefined
+  const loaded = useModules([moduleId ? index.modules.get(moduleId) : undefined])
+  if (loaded === "failed") {
+    return (
+      <Empty>
+        <EmptyHeader>
+          <EmptyTitle>Module data missing</EmptyTitle>
+          <EmptyDescription>
+            The sources of this module could not be loaded. Keep the <code>modules/</code> folder next to <code>index.html</code>.
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    )
+  }
+  if (!loaded) return <PageSkeleton />
   switch (route.page) {
     case "home":
       return index.root ? <ModulePage module={index.root} home /> : null
@@ -190,6 +215,18 @@ function ThemeToggle() {
     <Button variant="ghost" size="icon" onClick={() => setTheme(dark ? "light" : "dark")} aria-label="Toggle theme">
       {dark ? <SunIcon /> : <MoonIcon />}
     </Button>
+  )
+}
+
+/** Shown for the moment a module's sources take to load. */
+function PageSkeleton() {
+  return (
+    <div className="flex flex-col gap-4">
+      <Skeleton className="h-5 w-24" />
+      <Skeleton className="h-10 w-2/3" />
+      <Skeleton className="h-24 w-full max-w-3xl" />
+      <Skeleton className="h-64 w-full" />
+    </div>
   )
 }
 

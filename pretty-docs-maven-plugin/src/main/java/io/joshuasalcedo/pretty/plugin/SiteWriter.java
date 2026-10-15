@@ -1,5 +1,7 @@
 package io.joshuasalcedo.pretty.plugin;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonParser;
 import io.joshuasalcedo.pretty.JavaParser;
 import io.joshuasalcedo.pretty.plugin.model.DocumentationSite;
 
@@ -71,9 +73,17 @@ public final class SiteWriter {
                 Files.copy(in, outputDirectory.resolve("index.html"));
             }
         }
+        String json = JavaParser.toJson(site, false);
         Files.writeString(outputDirectory.resolve("docs.json"), JavaParser.toJson(site, true), StandardCharsets.UTF_8);
+        // The page loads an outline up front and each module's sources when one of its pages opens.
+        Gson gson = new Gson();
+        ModuleDataSplitter.Result split = ModuleDataSplitter.split(JsonParser.parseString(json).getAsJsonObject(), gson);
+        Files.createDirectories(outputDirectory.resolve(ModuleDataSplitter.DIRECTORY));
+        for (Map.Entry<String, String> script : split.moduleScripts().entrySet()) {
+            Files.writeString(outputDirectory.resolve(script.getKey()), script.getValue(), StandardCharsets.UTF_8);
+        }
         Files.writeString(outputDirectory.resolve("docs-data.js"),
-                "window.__PRETTY_DOCS__ = " + JavaParser.toJson(site, false) + ";\n", StandardCharsets.UTF_8);
+                "window.__PRETTY_DOCS__ = " + gson.toJson(split.outline()) + ";\n", StandardCharsets.UTF_8);
         return outputDirectory.resolve("index.html");
     }
 

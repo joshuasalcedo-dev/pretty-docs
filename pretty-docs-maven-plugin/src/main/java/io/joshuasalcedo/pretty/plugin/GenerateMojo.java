@@ -8,8 +8,10 @@ import io.joshuasalcedo.pretty.plugin.model.ModuleDocumentation;
 import io.joshuasalcedo.pretty.spring.model.BeanIssue;
 import io.joshuasalcedo.pretty.spring.model.SpringStructure;
 import org.apache.maven.execution.MavenSession;
+import io.joshuasalcedo.pretty.maven.model.DependencyStructure;
 import io.joshuasalcedo.pretty.maven.model.MavenProjectStructure;
 import org.apache.maven.model.Dependency;
+import org.apache.maven.model.DependencyManagement;
 import org.apache.maven.model.Model;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -135,6 +137,8 @@ public class GenerateMojo extends AbstractMojo {
             default -> throw new MojoFailureException("mode must be 'resolved' or 'source' but was: " + mode);
         };
 
+        Set<String> reactorIds = new HashSet<>();
+        session.getProjects().forEach(p -> reactorIds.add(p.getGroupId() + ":" + p.getArtifactId()));
         List<MavenProject> projects = new ArrayList<>();
         List<DocumentationGenerator.ModuleInput> modules = new ArrayList<>();
         for (MavenProject module : session.getProjects()) {
@@ -148,7 +152,13 @@ public class GenerateMojo extends AbstractMojo {
                     module.getBasedir().toPath(),
                     describe(module),
                     paths(module.getCompileSourceRoots()),
-                    includeTestSources ? paths(module.getTestCompileSourceRoots()) : List.of()));
+                    includeTestSources ? paths(module.getTestCompileSourceRoots()) : List.of(),
+                    module.getResources().stream().map(r -> Path.of(r.getDirectory())).toList(),
+                    module.getDependencies().stream()
+                            .filter(d -> !"test".equals(d.getScope()))
+                            .map(d -> d.getGroupId() + ":" + d.getArtifactId())
+                            .filter(reactorIds::contains)
+                            .distinct().toList()));
         }
 
         Map<String, String> dependencies = declaredDependencies(projects);
@@ -257,7 +267,51 @@ public class GenerateMojo extends AbstractMojo {
         if (chain.stream().noneMatch(m -> m.getInceptionYear() != null)) {
             structure.setInceptionYear(null);
         }
+        structure.setManagedDependencies(ownManagedDependencies(module));
         return structure;
+    }
+
+    /**
+     * The dependency management this module's own POM declares. The effective model would repeat
+     * everything inherited and every imported BOM (Spring Boot's alone has ~1,300 entries) in every
+     * module; imported BOMs are listed as one entry each instead.
+     */
+    private static List<DependencyStructure> ownManagedDependencies(MavenProject module) {
+        DependencyManagement declared = module.getOriginalModel().getDependencyManagement();
+        if (declared == null) {
+            return List.of();
+        }
+        List<DependencyStructure> effective = module.getDependencyManagement() == null ? List.of()
+                : MavenParser.fromModel(module.getModel(), module.getBasedir().toPath()).getManagedDependencies();
+        List<DependencyStructure> result = new ArrayList<>();
+        for (Dependency dependency : declared.getDependencies()) {
+            String groupId = interpolate(dependency.getGroupId(), module);
+            String artifactId = interpolate(dependency.getArtifactId(), module);
+            if ("import".equals(dependency.getScope())) {
+                result.add(DependencyStructure.builder().groupId(groupId).artifactId(artifactId)
+                        .version(interpolate(dependency.getVersion(), module)).scope("import").type("pom").build());
+                continue;
+            }
+            effective.stream()
+                    .filter(d -> d.getGroupId().equals(groupId) && d.getArtifactId().equals(artifactId))
+                    .findFirst().ifPresent(result::add);
+        }
+        return result;
+    }
+
+    private static String interpolate(String value, MavenProject module) {
+        if (value == null || !value.contains("${")) {
+            return value;
+        }
+        String result = value.replace("${project.groupId}", module.getGroupId()).replace("${project.version}", module.getVersion())
+                .replace("${project.artifactId}", module.getArtifactId());
+        Matcher matcher = Pattern.compile("\\$\\{([^}]+)}").matcher(result);
+        StringBuilder out = new StringBuilder();
+        while (matcher.find()) {
+            String property = module.getProperties().getProperty(matcher.group(1));
+            matcher.appendReplacement(out, Matcher.quoteReplacement(property != null ? property : matcher.group()));
+        }
+        return matcher.appendTail(out).toString();
     }
 
     /** groupId:artifactId -> version of the jar dependencies the modules declare (versions are already managed). */

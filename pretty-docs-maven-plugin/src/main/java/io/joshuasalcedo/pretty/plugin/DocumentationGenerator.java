@@ -9,6 +9,7 @@ import io.joshuasalcedo.pretty.plugin.model.ModuleDocumentation;
 import io.joshuasalcedo.pretty.plugin.model.ModuleStatistics;
 import io.joshuasalcedo.pretty.resolve.JavadocResolver;
 import io.joshuasalcedo.pretty.resolve.Resolution;
+import io.joshuasalcedo.pretty.spring.ProjectLayout;
 import io.joshuasalcedo.pretty.spring.SpringAnalyzer;
 import io.joshuasalcedo.pretty.spring.model.SpringStructure;
 
@@ -33,9 +34,16 @@ public final class DocumentationGenerator {
      * @param project         POM metadata
      * @param sourceRoots     main source directories (missing ones are ignored)
      * @param testSourceRoots test source directories, empty to leave tests out
+     * @param resourceDirs    main resource directories (configuration files, auto-configuration imports)
+     * @param dependsOn       ids of the build modules it depends on
      */
     public record ModuleInput(String id, Path basedir, MavenProjectStructure project,
-                              List<Path> sourceRoots, List<Path> testSourceRoots) {
+                              List<Path> sourceRoots, List<Path> testSourceRoots,
+                              List<Path> resourceDirs, List<String> dependsOn) {
+
+        public ModuleInput(String id, Path basedir, MavenProjectStructure project, List<Path> sourceRoots, List<Path> testSourceRoots) {
+            this(id, basedir, project, sourceRoots, testSourceRoots, List.of(basedir.resolve("src/main/resources")), List.of());
+        }
     }
 
     /**
@@ -83,7 +91,8 @@ public final class DocumentationGenerator {
         Map<Path, List<JavaFileStructure>> parsed = JavaParser.parseDirectories(allRoots.stream().distinct().toList());
         boolean resolved = resolve != null && resolve(parsed, resolve, log);
         // Before visibility filtering: private constructors and fields decide how beans are injected.
-        SpringStructure spring = SpringAnalyzer.analyze(parsed.values().stream().flatMap(List::stream).toList()).orElse(null);
+        ProjectLayout layout = SpringLayoutReader.read(root, modules, resolve == null ? List.of() : resolve.classpath(), log);
+        SpringStructure spring = SpringAnalyzer.analyze(parsed.values().stream().flatMap(List::stream).toList(), layout).orElse(null);
         ReadmeRenderer readme = new ReadmeRenderer();
 
         List<ModuleDocumentation> documented = new ArrayList<>();
