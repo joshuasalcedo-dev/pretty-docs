@@ -97,8 +97,8 @@ disk or any static host.
 ## Quick start
 
 The plugin is not on Maven Central yet. Install it into your local Maven repository once, either from the
-[1.2.0 release](https://github.com/joshuasalcedo-dev/pretty-docs/releases/tag/v1.2.0) (unzip
-`pretty-docs-1.2.0-maven-repository.zip` into `~/.m2/repository`) or from source:
+[1.2.1 release](https://github.com/joshuasalcedo-dev/pretty-docs/releases/tag/v1.2.1) (unzip
+`pretty-docs-1.2.1-maven-repository.zip` into `~/.m2/repository`) or from source:
 
 ```shell
 git clone git@github.com:joshuasalcedo-dev/pretty-docs.git
@@ -109,7 +109,7 @@ mvn install
 Then, in the root of **any** Maven project:
 
 ```shell
-mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.2.0:generate
+mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.2.1:generate
 ```
 
 The site is written to `target/pretty-docs/`. The build log tells you how to open it:
@@ -117,7 +117,7 @@ The site is written to `target/pretty-docs/`. The build log tells you how to ope
 ```text
 [INFO] Documented 113 types in 8 module(s) (resolved mode, 7 external javadoc site(s) linked)
 [INFO] Please run one of these commands to serve the static site:
-[INFO]   mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.2.0:serve
+[INFO]   mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.2.1:serve
 [INFO]   npx serve "target/pretty-docs" -l 4400
 [INFO]   python -m http.server 4400 -d "target/pretty-docs"
 [INFO] Then open: http://localhost:4400/
@@ -135,7 +135,7 @@ Add the plugin to your root POM so the command gets shorter and the settings liv
     <plugin>
       <groupId>io.joshuasalcedo.pretty</groupId>
       <artifactId>pretty-docs-maven-plugin</artifactId>
-      <version>1.2.0</version>
+      <version>1.2.1</version>
       <configuration>
         <visibility>protected</visibility>
         <excludeModules>
@@ -244,7 +244,7 @@ This repository publishes its own documentation with
 ```yaml
 - uses: actions/setup-java@v5
   with: { distribution: temurin, java-version: 21, cache: maven }
-- run: mvn -B -ntp io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.2.0:generate
+- run: mvn -B -ntp io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.2.1:generate
 - uses: actions/upload-pages-artifact@v3
   with: { path: target/pretty-docs }
 # then actions/deploy-pages@v4 in a job with `pages: write` and `id-token: write`
@@ -286,8 +286,8 @@ mvn install -pl pretty-java -am                 # one module and what it needs
 mvn -pl pretty-spring test -Dtest=SpringAnalyzerTest#reportsWiringProblems
 
 # Try it on this repository
-mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.2.0:generate
-mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.2.0:serve
+mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.2.1:generate
+mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.2.1:serve
 ```
 
 Working on the site template (Node.js 20+): generate docs for any project, copy its
