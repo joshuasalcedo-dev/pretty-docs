@@ -17,6 +17,7 @@ public class ConstructorStructure {
     private List<TypeParameterStructure> typeParameters;
     private String body;
     private JavadocStructure javadoc;
+    private String signature; // the declaration as written, for languages other than Java (null for Java)
     private List<CommentStructure> comments;
     
     // Usage information

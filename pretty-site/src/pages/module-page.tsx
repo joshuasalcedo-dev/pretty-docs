@@ -1,4 +1,5 @@
 import { ExternalLinkIcon } from "lucide-react"
+import { useState } from "react"
 
 import { DiagramView, diagramsFor } from "@/components/docs/diagram-view"
 import { ReadmeView } from "@/components/docs/javadoc-text"
@@ -10,12 +11,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useDocs } from "@/lib/docs/context"
 import { coverage, formatNumber, moduleName, routes } from "@/lib/docs/model"
 import type { Dependency, ModuleDocumentation } from "@/lib/docs/types"
+import { AssetGrid, BackdropSwitch } from "@/pages/assets-page"
 
 export function ModulePage({ module, home }: { module: ModuleDocumentation; home?: boolean }) {
   const index = useDocs()
   const project = module.project
   const packages = index.packages.get(module.id) ?? []
-  const subModules = home ? index.site.modules.filter((m) => m.id !== module.id) : (index.children.get(module.id) ?? [])
+  const typescript = module.language === "typescript"
+  const assets = module.assets ?? []
+  const [backdrop, setBackdrop] = useState<"checker" | "light" | "dark">("checker")
+  // the home page lists every module, Maven modules before TypeScript packages
+  const subModules = home
+    ? index.site.modules
+        .filter((m) => m.id !== module.id)
+        .sort((a, b) => Number(a.language === "typescript") - Number(b.language === "typescript"))
+    : (index.children.get(module.id) ?? [])
   const stats = home ? totals(index.site.modules) : module.statistics
   const diagrams = [
     ...(home ? diagramsFor(index.site, "MODULE_DEPENDENCIES") : []),
@@ -27,7 +37,7 @@ export function ModulePage({ module, home }: { module: ModuleDocumentation; home
       <header className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="secondary">{project.packaging}</Badge>
-          <Badge variant="outline">v{project.version}</Badge>
+          {project.version && <Badge variant="outline">v{project.version}</Badge>}
           <span className="font-mono text-xs text-muted-foreground">{module.id}</span>
         </div>
         <h1 className="font-heading text-4xl font-bold tracking-tight">
@@ -48,8 +58,9 @@ export function ModulePage({ module, home }: { module: ModuleDocumentation; home
       <Tabs key={module.id} defaultValue={module.readmeHtml ? "readme" : subModules.length > 0 && packages.length === 0 ? "modules" : "packages"}>
         <TabsList variant="pill">
           {module.readmeHtml && <TabsTrigger value="readme">README</TabsTrigger>}
-          <TabsTrigger value="packages">Packages</TabsTrigger>
-          {subModules.length > 0 && <TabsTrigger value="modules">Modules</TabsTrigger>}
+          <TabsTrigger value="packages">{typescript ? "Folders" : "Packages"}</TabsTrigger>
+          {subModules.length > 0 && <TabsTrigger value="modules">{typescript ? "Packages" : "Modules"}</TabsTrigger>}
+          {assets.length > 0 && <TabsTrigger value="assets">Assets</TabsTrigger>}
           {diagrams.length > 0 && <TabsTrigger value="diagrams">Diagrams</TabsTrigger>}
           <TabsTrigger value="dependencies">Dependencies</TabsTrigger>
           <TabsTrigger value="build">Build</TabsTrigger>
@@ -66,9 +77,9 @@ export function ModulePage({ module, home }: { module: ModuleDocumentation; home
           {packages.length === 0 ? (
             <Empty>
               <EmptyHeader>
-                <EmptyTitle>No Java sources</EmptyTitle>
+                <EmptyTitle>{typescript ? "No TypeScript sources" : "No Java sources"}</EmptyTitle>
                 <EmptyDescription>
-                  {subModules.length > 0 ? "This module aggregates other modules." : "Nothing documented at this visibility."}
+                  {subModules.length > 0 ? (typescript ? "This workspace holds other packages." : "This module aggregates other modules.") : "Nothing documented at this visibility."}
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
@@ -121,6 +132,13 @@ export function ModulePage({ module, home }: { module: ModuleDocumentation; home
                 ))}
               </TableBody>
             </Table>
+          </TabsContent>
+        )}
+
+        {assets.length > 0 && (
+          <TabsContent value="assets" className="flex flex-col gap-4 pt-4">
+            <BackdropSwitch value={backdrop} onChange={setBackdrop} />
+            <AssetGrid assets={assets} backdrop={backdrop} />
           </TabsContent>
         )}
 
@@ -242,10 +260,10 @@ function DependencyTable({ title, dependencies }: { title: string; dependencies:
             {dependencies.map((d, i) => (
               <TableRow key={`${d.groupId}:${d.artifactId}:${d.classifier ?? ""}:${i}`}>
                 <TableCell className="font-mono text-xs">
-                  {d.groupId}:<span className="font-medium text-foreground">{d.artifactId}</span>
+                  {d.type !== "npm" && `${d.groupId}:`}<span className="font-medium text-foreground">{d.artifactId}</span>
                   {d.optional && <Badge variant="outline" className="ml-2">optional</Badge>}
                 </TableCell>
-                <TableCell className="font-mono text-xs">{d.version ?? "managed"}</TableCell>
+                <TableCell className="font-mono text-xs">{d.version ?? (d.type === "npm" ? "—" : "managed")}</TableCell>
                 <TableCell>
                   <Badge variant={d.scope === "compile" ? "secondary" : "outline"}>{d.scope}</Badge>
                 </TableCell>
@@ -268,7 +286,7 @@ function About({ module }: { module: ModuleDocumentation }) {
         </CardHeader>
         <CardContent className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
           <span className="text-muted-foreground">Coordinates</span>
-          <span className="font-mono text-xs">{p.groupId}:{p.artifactId}:{p.version}</span>
+          <span className="font-mono text-xs">{module.language === "typescript" ? `${p.artifactId}@${p.version || "—"}` : `${p.groupId}:${p.artifactId}:${p.version}`}</span>
           {p.inceptionYear && (
             <>
               <span className="text-muted-foreground">Since</span>

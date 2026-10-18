@@ -1,7 +1,9 @@
-import { BarChart3Icon, BoxIcon, ChevronRightIcon, FolderTreeIcon, LeafIcon, ListIcon, PackageIcon, SearchIcon, ListTreeIcon } from "lucide-react"
+import { BarChart3Icon, BugIcon, BoxIcon, ImagesIcon, ChevronRightIcon, FolderTreeIcon, LeafIcon, ListIcon, PackageIcon, SearchIcon, ListTreeIcon } from "lucide-react"
 import { useMemo, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react"
 
+import { RepositoryLink } from "@/components/docs/repository-link"
 import { TypeIcon } from "@/components/docs/type-icon"
+import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Kbd } from "@/components/ui/kbd"
 import {
@@ -64,8 +66,11 @@ export function AppSidebar({
   const index = useDocs()
   const active = activeLocation(route, index)
   const root = index.root
-  const multiModule = index.site.modules.length > 1
+  const multiModule = index.site.modules.filter((m) => m.language !== "typescript").length > 1
   const problems = index.site.spring?.issues.filter((i) => i.severity !== "INFO").length ?? 0
+  const highFindings = index.site.quality?.findings.filter((f) => f.priority === "HIGH").length ?? 0
+  const assetCount = index.site.modules.reduce((sum, m) => sum + (m.assets?.length ?? 0), 0)
+  const snapshot = root?.project.version.endsWith("-SNAPSHOT") ?? false
   const title = index.site.title || (root ? moduleName(root) : "Documentation")
   const license = root?.project.licenses[0]?.name
   const owner = root?.project.organizationName ?? root?.project.developers[0]?.name
@@ -73,13 +78,25 @@ export function AppSidebar({
   return (
     <Sidebar>
       <SidebarHeader className="gap-4 px-4 pt-6">
-        <a href={routes.home()} className="flex items-center gap-2">
-          <span className="font-heading text-xl font-extrabold tracking-tight text-primary">{monogram(title)}</span>
-          <span className="flex min-w-0 flex-col leading-tight">
-            <span className="truncate text-sm font-semibold">{title}</span>
-            {root && <span className="truncate text-xs text-muted-foreground">v{root.project.version}</span>}
-          </span>
-        </a>
+        <div className="flex items-center gap-1">
+          <a href={routes.home()} className="flex min-w-0 flex-1 items-center gap-2">
+            {index.site.logo ? (
+              <img src={index.site.logo} alt="" className="size-8 shrink-0 object-contain" />
+            ) : (
+              <span className="font-heading text-xl font-extrabold tracking-tight text-primary">{monogram(title)}</span>
+            )}
+            <span className="flex min-w-0 flex-col leading-tight">
+              <span className="truncate text-sm font-semibold">{title}</span>
+              {root && (
+                <span className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
+                  v{root.project.version.replace(/-SNAPSHOT$/, "")}
+                  {snapshot && <Badge variant="outline" className="h-4 px-1 text-[10px] uppercase">snapshot</Badge>}
+                </span>
+              )}
+            </span>
+          </a>
+          {index.site.repositoryUrl && <RepositoryLink url={index.site.repositoryUrl} />}
+        </div>
         <button
           type="button"
           onClick={onSearch}
@@ -111,6 +128,24 @@ export function AppSidebar({
                   <span>Statistics</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+              {index.site.quality && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton render={<a href={routes.quality()} />} isActive={route.page === "quality"}>
+                    <BugIcon />
+                    <span>Quality</span>
+                  </SidebarMenuButton>
+                  {highFindings > 0 && <SidebarMenuBadge>{highFindings}</SidebarMenuBadge>}
+                </SidebarMenuItem>
+              )}
+              {assetCount > 0 && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton render={<a href={routes.assets()} />} isActive={route.page === "assets"}>
+                    <ImagesIcon />
+                    <span>Assets</span>
+                  </SidebarMenuButton>
+                  <SidebarMenuBadge>{assetCount}</SidebarMenuBadge>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -118,7 +153,7 @@ export function AppSidebar({
         {root && (
           <SidebarGroup>
             <div className="flex items-center justify-between gap-2 pr-1">
-              <SidebarGroupLabel className={LABEL}>{view === "types" ? "Types" : multiModule ? "Modules" : "Packages"}</SidebarGroupLabel>
+              <SidebarGroupLabel className={LABEL}>{view === "types" ? "Types" : multiModule ? (index.typescriptRoots.length > 0 ? "Maven modules" : "Modules") : "Packages"}</SidebarGroupLabel>
               <ViewSwitch view={view} onViewChange={onViewChange} />
             </div>
             <SidebarGroupContent>
@@ -135,6 +170,19 @@ export function AppSidebar({
                   )}
                 </SidebarMenu>
               )}
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
+        {view !== "types" && index.typescriptRoots.length > 0 && (
+          <SidebarGroup>
+            <SidebarGroupLabel className={LABEL}>TypeScript</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {index.typescriptRoots.map((module) => (
+                  <ModuleNode key={module.id} module={module} active={active} depth={0} view={view} collapsed />
+                ))}
+              </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
         )}
@@ -213,7 +261,14 @@ function ResizeHandle({ onResize }: { onResize: (width: number) => void }) {
 
 // ------------------------------------------------------------------ modules
 
-function ModuleNode({ module, active, depth, view }: { module: ModuleDocumentation; active: Active; depth: number; view: SidebarView }) {
+function ModuleNode({ module, active, depth, view, collapsed }: {
+  module: ModuleDocumentation
+  active: Active
+  depth: number
+  view: SidebarView
+  /** A top-level node that starts closed unless it holds the current page. */
+  collapsed?: boolean
+}) {
   const index = useDocs()
   const children = index.children.get(module.id) ?? []
   const containsActive = (m: ModuleDocumentation): boolean =>
@@ -244,7 +299,7 @@ function ModuleNode({ module, active, depth, view }: { module: ModuleDocumentati
 
   if (depth === 0) {
     return (
-      <Collapsible defaultOpen className="group/collapsible" render={<SidebarMenuItem />}>
+      <Collapsible defaultOpen={!collapsed || containsActive(module)} className="group/collapsible" render={<SidebarMenuItem />}>
         <CollapsibleTrigger className="group/trigger" render={<SidebarMenuButton isActive={isActive} />}>{label}</CollapsibleTrigger>
         <CollapsibleContent>
           <SidebarMenuSub>{content}</SidebarMenuSub>

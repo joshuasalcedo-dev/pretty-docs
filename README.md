@@ -57,18 +57,48 @@ disk or any static host.
   `@Value`, `@ConditionalOnProperty`, `Environment.getProperty` calls, or a library's
   `spring-configuration-metadata.json` (read from the resolved dependencies). Keys nothing reads are flagged,
   with a "did you mean" suggestion for likely typos, and so are required `@Value` placeholders no file sets.
+- **TypeScript, as its own tree** (opt-in: `<typescript>true</typescript>` or `-Dpretty-docs.typescript=true`). Every directory with a `tsconfig.json` inside the build (a frontend next to
+  the backend, a workspace package) becomes a package of its own, described by its `package.json`. TypeScript
+  is kept apart from the Maven modules: it has its own sidebar section and dependency graph, and packages are
+  grouped under the npm, yarn, pnpm or bun workspace (`"workspaces"` in `package.json`, or
+  `pnpm-workspace.yaml`) that lists them as members. It is read with the
+  TypeScript compiler (bundled with the plugin) and its type checker, so you get:
+  - classes, interfaces, enums, type aliases, functions (React components included) and exported constants;
+  - JSDoc and signatures exactly as written;
+  - types linked across files, and a "Used by" list that counts calls, JSX usages and type references.
+
+  Exported declarations are public; the rest is package-private, so the default `protected` visibility
+  documents a project's exports. This needs `node` on the PATH and is skipped with a message when there is none.
+- **Code quality.** A Quality page, plus a Findings section on each type's page, lists likely bugs from three
+  tools. Each finding links to the rule's documentation and to the code.
+  - **PMD** reads the Java sources, so no build is needed. It runs a curated set of error-prone,
+    best-practice, multithreading, performance and security rules; style rules are left out.
+  - **SpotBugs** reads the classes of the last build (`target/classes`): null dereferences, `equals`
+    without `hashCode`, unsafe synchronization and more. Modules that were never compiled are skipped.
+  - **The TypeScript compiler** reports type errors. Projects without installed `node_modules` get a
+    single "run npm install" note instead of a cascade of follow-on errors.
+
+  High-priority findings also appear as build warnings.
+- **Assets.** An Assets page (and a tab on each module page) shows the images in the modules' folders: icons,
+  logos, `public/`, `assets/`, `static/` and `src-tauri/icons/`, on a checkered, light or dark background.
+- **Logo and repository link.** The site header shows the project's logo (a `logo.svg`/`.png` in the usual
+  places, or the most logo-like asset) and a link to its GitHub (or other) repository, taken from the POM's
+  `<scm>` or the git remote. A `-SNAPSHOT` version is marked as a snapshot.
+- **Ignores.** `<ignores>` leaves directories out (Maven modules, TypeScript packages and assets), and so does
+  everything your `.gitignore` files ignore.
 
 ## Requirements
 
 - JDK 21 or newer (a JDK, not a JRE: the resolved mode uses the JDK's javadoc engine)
 - Maven 3.9 or newer
-- Node.js is **not** needed, to use or to build the plugin: the site template ships prebuilt inside it
+- Node.js is **not** needed, to use or to build the plugin: the site template ships prebuilt inside it. Only
+  documenting TypeScript runs `node` (any recent version) when it is on the PATH.
 
 ## Quick start
 
 The plugin is not on Maven Central yet. Install it into your local Maven repository once, either from the
-[1.1.0 release](https://github.com/joshuasalcedo-dev/pretty-docs/releases/tag/v1.1.0) (unzip
-`pretty-docs-1.1.0-maven-repository.zip` into `~/.m2/repository`) or from source:
+[1.2.0 release](https://github.com/joshuasalcedo-dev/pretty-docs/releases/tag/v1.2.0) (unzip
+`pretty-docs-1.2.0-maven-repository.zip` into `~/.m2/repository`) or from source:
 
 ```shell
 git clone git@github.com:joshuasalcedo-dev/pretty-docs.git
@@ -79,7 +109,7 @@ mvn install
 Then, in the root of **any** Maven project:
 
 ```shell
-mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.1.0:generate
+mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.2.0:generate
 ```
 
 The site is written to `target/pretty-docs/`. The build log tells you how to open it:
@@ -87,7 +117,7 @@ The site is written to `target/pretty-docs/`. The build log tells you how to ope
 ```text
 [INFO] Documented 113 types in 8 module(s) (resolved mode, 7 external javadoc site(s) linked)
 [INFO] Please run one of these commands to serve the static site:
-[INFO]   mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.1.0:serve
+[INFO]   mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.2.0:serve
 [INFO]   npx serve "target/pretty-docs" -l 4400
 [INFO]   python -m http.server 4400 -d "target/pretty-docs"
 [INFO] Then open: http://localhost:4400/
@@ -105,7 +135,7 @@ Add the plugin to your root POM so the command gets shorter and the settings liv
     <plugin>
       <groupId>io.joshuasalcedo.pretty</groupId>
       <artifactId>pretty-docs-maven-plugin</artifactId>
-      <version>1.1.0</version>
+      <version>1.2.0</version>
       <configuration>
         <visibility>protected</visibility>
         <excludeModules>
@@ -114,6 +144,13 @@ Add the plugin to your root POM so the command gets shorter and the settings liv
         <links>
           <link>https://docs.spring.io/spring-framework/docs/current/javadoc-api/</link>
         </links>
+        <ignores>
+          <ignore>legacy</ignore>
+          <ignore>frameworks/*/examples</ignore>
+        </ignores>
+        <typescriptProjects>
+          <project>applications/web</project>
+        </typescriptProjects>
       </configuration>
     </plugin>
   </plugins>
@@ -157,6 +194,21 @@ To build the docs with every `mvn package`, bind the goal on the root project on
 | `diagrams` | `pretty-docs.diagrams` | `true` | Generate PlantUML diagrams. |
 | `renderDiagrams` | `pretty-docs.renderDiagrams` | `true` | Render diagrams to SVG; `false` writes only `.puml`. |
 | `port` | `pretty-docs.port` | `4400` | Port shown in the "how to view" message. |
+| `typescript` | `pretty-docs.typescript` | `false` | Document TypeScript projects (directories with a `tsconfig.json`) found in the modules' directories; needs `node` on the PATH. Off by default. |
+| `typescriptExcludes` | `pretty-docs.typescriptExcludes` | | Directories to leave out of the TypeScript search only, relative to the root module, e.g. `legacy,examples`. `node_modules`, `target`, `dist`, `build` and hidden directories are always skipped. |
+| `typescriptProjects` | `pretty-docs.typescriptProjects` | all found | Document only these TypeScript projects (directories with a `tsconfig.json`, relative to the root module). |
+| `typescriptWorkspaces` | `pretty-docs.typescriptWorkspaces` | `true` | Group packages under their workspace; `false` lists each package on its own. |
+| `typescriptTypeCheck` | `pretty-docs.typescriptTypeCheck` | `true` | Report TypeScript compiler errors on the Quality page. |
+| `typescriptIncludeTests` | `pretty-docs.typescriptIncludeTests` | as `includeTestSources` | Document `*.test.ts`, `*.spec.ts` and `__tests__`. |
+| `node` | `pretty-docs.node` | `node` on the PATH | The node executable for the TypeScript analysis. |
+| `ignores` | `pretty-docs.ignores` | — | Directories to leave out entirely, relative to the root module: `legacy`, `frameworks/*/examples`, `**/fixtures`. A bare name matches anywhere. |
+| `gitignore` | `pretty-docs.gitignore` | `true` | Also leave out what the repository's `.gitignore` files ignore. |
+| `assets` | `pretty-docs.assets` | `true` | Show the modules' images (icons, logos, `public/`, `static/`) on an Assets page; files over 1 MB and more than 500 per module are left out. |
+| `logo` | `pretty-docs.logo` | found | Header logo, relative to the root module. |
+| `repositoryUrl` | `pretty-docs.repositoryUrl` | from `<scm>` or the git remote | Repository link in the header. |
+| `quality` | `pretty-docs.quality` | `true` | Code quality findings (PMD, SpotBugs, TypeScript compiler) in the site and the build log. |
+| `pmd` | `pretty-docs.pmd` | `true` | Run PMD on the Java sources. |
+| `spotbugs` | `pretty-docs.spotbugs` | `true` | Run SpotBugs on the classes of the last build; modules without `target/classes` are skipped. |
 | `skip` | `pretty-docs.skip` | `false` | Skip the goal. |
 
 `pretty-docs:serve` — serves the generated site with the JDK's built-in HTTP server until Ctrl+C.
@@ -192,7 +244,7 @@ This repository publishes its own documentation with
 ```yaml
 - uses: actions/setup-java@v5
   with: { distribution: temurin, java-version: 21, cache: maven }
-- run: mvn -B -ntp io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.1.0:generate
+- run: mvn -B -ntp io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.2.0:generate
 - uses: actions/upload-pages-artifact@v3
   with: { path: target/pretty-docs }
 # then actions/deploy-pages@v4 in a job with `pages: write` and `id-token: write`
@@ -219,6 +271,8 @@ POMs ─────► pretty-maven ──────────────�
 | `pretty-java` | Parses Java sources into a structural model (types, members, javadoc, comments, calls, line counts); `JavadocResolver` adds compiler-exact names and inherited docs. |
 | `pretty-maven` | Reads POM metadata and module trees. |
 | `pretty-spring` | Static Spring / Spring Boot analysis: beans, injection, endpoints, configuration properties, wiring checks. |
+| `pretty-quality` | Runs PMD (sources) and SpotBugs (compiled classes) in-process and collects their findings; the curated PMD rules are in `pmd-rules.xml`. |
+| `pretty-ts` | Reads TypeScript projects into the same model: a plain-JavaScript analyzer (`analyzer.cjs`) on the TypeScript compiler API, run by the user's `node`; the compiler ships as the `org.webjars.npm:typescript` WebJar. |
 | `pretty-site` | Source of the site template (Vite, React, Tailwind, shadcn/ui); not a Maven module. Its build is committed into the plugin's resources. |
 | `pretty-docs-maven-plugin` | The `generate` and `serve` goals that tie it together. |
 | `pretty-utils` | Small JSON / file / Git helpers. |
@@ -232,8 +286,8 @@ mvn install -pl pretty-java -am                 # one module and what it needs
 mvn -pl pretty-spring test -Dtest=SpringAnalyzerTest#reportsWiringProblems
 
 # Try it on this repository
-mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.1.0:generate
-mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.1.0:serve
+mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.2.0:generate
+mvn io.joshuasalcedo.pretty:pretty-docs-maven-plugin:1.2.0:serve
 ```
 
 Working on the site template (Node.js 20+): generate docs for any project, copy its

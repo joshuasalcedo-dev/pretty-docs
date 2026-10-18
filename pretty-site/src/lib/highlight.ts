@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { createHighlighterCore, type HighlighterCore } from "shiki/core"
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript"
 
-// Only the grammars a Java project's docs need, to keep the single-file bundle small.
+// Only the grammars a Java (and TypeScript) project's docs need, to keep the single-file bundle small.
 const LANGUAGES: Record<string, string> = {
   java: "java",
   kotlin: "kotlin",
@@ -22,6 +22,9 @@ const LANGUAGES: Record<string, string> = {
   shellscript: "shellscript",
   console: "shellscript",
   diff: "diff",
+  typescript: "typescript",
+  ts: "typescript",
+  tsx: "tsx",
 }
 
 let instance: HighlighterCore | null = null
@@ -38,6 +41,8 @@ const ready = createHighlighterCore({
     import("@shikijs/langs/sql"),
     import("@shikijs/langs/shellscript"),
     import("@shikijs/langs/diff"),
+    import("@shikijs/langs/typescript"),
+    import("@shikijs/langs/tsx"),
   ],
   engine: createJavaScriptRegexEngine(),
 }).then((highlighter) => (instance = highlighter))

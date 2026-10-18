@@ -41,6 +41,8 @@ export interface DocsIndex {
   root?: ModuleDocumentation
   modules: Map<string, ModuleDocumentation>
   children: Map<string | undefined, ModuleDocumentation[]>
+  /** TypeScript packages and workspaces with no TypeScript parent: the top of their own tree, apart from the Maven modules. */
+  typescriptRoots: ModuleDocumentation[]
   packages: Map<string, PackageInfo[]> // module id -> packages, sorted
   types: Map<string, IndexedType> // qualified name -> type
   search: SearchEntry[]
@@ -59,6 +61,8 @@ export const routes = {
   pkg: (moduleId: string, pkg: string) =>
     `#/m/${encodeURIComponent(moduleId)}/p/${encodeURIComponent(pkg || "(default)")}`,
   stats: () => "#/stats",
+  quality: () => "#/quality",
+  assets: () => "#/assets",
   spring: (tab?: string) => `#/spring${tab ? `/${tab}` : ""}`,
   type: (qualifiedName: string, member?: string) =>
     `#/t/${encodeURIComponent(qualifiedName)}${member ? `/${encodeURIComponent(member)}` : ""}`,
@@ -67,8 +71,13 @@ export const routes = {
 export function buildIndex(site: DocumentationSite): DocsIndex {
   const modules = new Map(site.modules.map((m) => [m.id, m]))
   const children = new Map<string | undefined, ModuleDocumentation[]>()
+  const typescriptRoots: ModuleDocumentation[] = []
   for (const module of site.modules) {
     if (module.id === site.rootModuleId) continue
+    if (module.language === "typescript" && !(module.parentId && modules.has(module.parentId))) {
+      typescriptRoots.push(module)
+      continue
+    }
     // Modules whose parent was excluded hang off the root.
     const parent = module.parentId && modules.has(module.parentId) ? module.parentId : site.rootModuleId
     children.set(parent, [...(children.get(parent) ?? []), module])
@@ -146,6 +155,7 @@ export function buildIndex(site: DocumentationSite): DocsIndex {
     root: site.rootModuleId ? modules.get(site.rootModuleId) : site.modules[0],
     modules,
     children,
+    typescriptRoots: typescriptRoots.sort((a, b) => moduleName(a).localeCompare(moduleName(b))),
     packages,
     types,
     search,
@@ -330,9 +340,13 @@ export const KIND_LABELS: Record<TypeKind, { singular: string; plural: string }>
   ENUM: { singular: "Enum", plural: "Enums" },
   RECORD: { singular: "Record", plural: "Records" },
   ANNOTATION: { singular: "Annotation", plural: "Annotations" },
+  TYPE_ALIAS: { singular: "Type alias", plural: "Type aliases" },
+  FUNCTION: { singular: "Function", plural: "Functions" },
+  VARIABLE: { singular: "Variable", plural: "Variables" },
+  NAMESPACE: { singular: "Namespace", plural: "Namespaces" },
 }
 
-export const KIND_ORDER: TypeKind[] = ["INTERFACE", "CLASS", "RECORD", "ENUM", "ANNOTATION"]
+export const KIND_ORDER: TypeKind[] = ["INTERFACE", "CLASS", "RECORD", "ENUM", "ANNOTATION", "TYPE_ALIAS", "FUNCTION", "VARIABLE", "NAMESPACE"]
 
 export function kindLabel(type: TypeStructure) {
   if (type.kind === "CLASS" && hasModifier(type.modifiers, "ABSTRACT")) return "Abstract class"

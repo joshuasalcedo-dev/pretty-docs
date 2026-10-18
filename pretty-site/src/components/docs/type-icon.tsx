@@ -3,7 +3,7 @@ import { hasModifier } from "@/lib/docs/model"
 import type { TypeStructure } from "@/lib/docs/types"
 import { cn } from "@/lib/utils"
 
-export type Kind = "class" | "abstract" | "interface" | "enum" | "record" | "annotation"
+export type Kind = "class" | "abstract" | "interface" | "enum" | "record" | "annotation" | "alias" | "function" | "variable" | "namespace"
 
 const KIND: Record<Kind, { letter: string; color: string; label: string }> = {
   class: { letter: "C", color: "text-kind-class", label: "Class" },
@@ -12,6 +12,11 @@ const KIND: Record<Kind, { letter: string; color: string; label: string }> = {
   enum: { letter: "E", color: "text-kind-enum", label: "Enum" },
   record: { letter: "R", color: "text-kind-record", label: "Record" },
   annotation: { letter: "@", color: "text-kind-annotation", label: "Annotation" },
+  // TypeScript declarations, on the same palette
+  alias: { letter: "T", color: "text-kind-record", label: "Type alias" },
+  function: { letter: "ƒ", color: "text-kind-class", label: "Function" },
+  variable: { letter: "V", color: "text-kind-annotation", label: "Variable" },
+  namespace: { letter: "N", color: "text-kind-enum", label: "Namespace" },
 }
 
 type Badge = "spring" | "entity" | "exception" | "test"
@@ -33,6 +38,11 @@ function kindOf(type: TypeStructure): Kind {
       return "record"
     case "ANNOTATION":
       return "annotation"
+    case "TYPE_ALIAS":
+    case "FUNCTION":
+    case "VARIABLE":
+    case "NAMESPACE":
+      return iconKind(type.kind)
     default:
       return hasModifier(type.modifiers, "ABSTRACT") ? "abstract" : "class"
   }
@@ -77,6 +87,7 @@ export function KindIcon({ kind: key, badge, className }: { kind: Kind; badge?: 
 
 /** Icon kind for a TypeKind (classes are drawn as plain classes). */
 export function iconKind(kind: TypeStructure["kind"]): Kind {
+  if (kind === "TYPE_ALIAS") return "alias"
   return kind === "CLASS" ? "class" : (kind.toLowerCase() as Kind)
 }
 

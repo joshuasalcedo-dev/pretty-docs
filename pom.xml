@@ -24,6 +24,8 @@
         <module>pretty-maven</module>
         <module>pretty-docs-maven-plugin</module>
         <module>pretty-spring</module>
+        <module>pretty-ts</module>
+        <module>pretty-quality</module>
     </modules>
 
     <!-- License Information -->
@@ -71,7 +73,7 @@
 
     <!-- Project Properties -->
     <properties>
-        <revision>1.1.0</revision>
+        <revision>1.2.0</revision>
 
         <!-- Build properties -->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -105,6 +107,9 @@
         <maven-plugin-tools.version>3.16.0</maven-plugin-tools.version>
         <plantuml.version>1.2026.8</plantuml.version>
         <snakeyaml.version>2.7</snakeyaml.version>
+        <typescript.version>6.0.3</typescript.version>
+        <pmd.version>7.28.0</pmd.version>
+        <spotbugs.version>4.10.5</spotbugs.version>
     </properties>
 
     <!-- Repository configuration -->
@@ -149,6 +154,23 @@
 
 
 
+            <!-- Code quality: PMD on sources, SpotBugs on compiled classes (pretty-quality) -->
+            <dependency>
+                <groupId>net.sourceforge.pmd</groupId>
+                <artifactId>pmd-java</artifactId>
+                <version>${pmd.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs</artifactId>
+                <version>${spotbugs.version}</version>
+            </dependency>
+            <!-- TypeScript sources: the compiler, run by the user's node when there is one (pretty-ts) -->
+            <dependency>
+                <groupId>org.webjars.npm</groupId>
+                <artifactId>typescript</artifactId>
+                <version>${typescript.version}</version>
+            </dependency>
             <!-- Spring configuration files (YAML with comments and line numbers) -->
             <dependency>
                 <groupId>org.yaml</groupId>

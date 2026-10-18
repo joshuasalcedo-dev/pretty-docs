@@ -42,6 +42,16 @@
             <artifactId>pretty-spring</artifactId>
             <version>${revision}</version>
         </dependency>
+        <dependency>
+            <groupId>io.joshuasalcedo.pretty</groupId>
+            <artifactId>pretty-ts</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.joshuasalcedo.pretty</groupId>
+            <artifactId>pretty-quality</artifactId>
+            <version>${revision}</version>
+        </dependency>
         <!-- The site template is prebuilt into src/main/resources/pretty-site (see ../pretty-site), so
              building and using the plugin needs no Node.js. -->
 

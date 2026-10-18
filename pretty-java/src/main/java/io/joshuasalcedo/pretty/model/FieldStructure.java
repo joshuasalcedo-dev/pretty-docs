@@ -15,6 +15,7 @@ public class FieldStructure {
     private List<AnnotationStructure> annotations;
     private String initializer; // The initialization expression, if any
     private JavadocStructure javadoc;
+    private String signature; // the declaration as written, for languages other than Java (null for Java)
     private List<CommentStructure> comments;
     private boolean isEnumConstant;
     

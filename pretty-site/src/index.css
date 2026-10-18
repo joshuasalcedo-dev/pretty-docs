@@ -173,6 +173,18 @@
 }
 /* Shiki code blocks: both themes are emitted as CSS variables; pick by color scheme. */
 @layer components {
+  /* Backdrops behind asset thumbnails: transparent icons need contrast in both themes. */
+  .asset-backdrop-checker {
+    background-color: var(--background);
+    background-image: conic-gradient(var(--muted) 25%, transparent 0 50%, var(--muted) 0 75%, transparent 0);
+    background-size: 16px 16px;
+  }
+  .asset-backdrop-light {
+    background-color: #ffffff;
+  }
+  .asset-backdrop-dark {
+    background-color: #16181b;
+  }
   .shiki {
     @apply my-0 overflow-x-auto rounded-md bg-muted px-4 py-3 font-mono text-[13px] leading-6;
   }

@@ -23,6 +23,7 @@ import {
   type IndexedType,
 } from "@/lib/docs/model"
 import { scrollToElement } from "@/lib/scroll"
+import { FindingsTable, useTypeFindings } from "@/pages/quality-page"
 import { BeanCard } from "@/pages/spring-page"
 import { TypeIcon } from "@/components/docs/type-icon"
 import type { Annotation, Constructor, Field, Javadoc, MemberReference, Method, TypeParameter, TypeStructure } from "@/lib/docs/types"
@@ -33,22 +34,38 @@ const KIND_KEYWORD: Record<TypeStructure["kind"], string> = {
   ENUM: "enum",
   RECORD: "record",
   ANNOTATION: "@interface",
+  TYPE_ALIAS: "type",
+  FUNCTION: "function",
+  VARIABLE: "const",
+  NAMESPACE: "namespace",
+}
+
+/** A declaration as its language writes it (TypeScript), highlighted. */
+function WrittenSignature({ code, language }: { code: string; language: string }) {
+  return <JavaCode code={code} language={language === "typescript" ? "typescript" : "java"} />
 }
 
 export function TypePage({ indexed, member }: { indexed: IndexedType; member?: string }) {
   const { type, packageName } = indexed
+  const language = indexed.file.language ?? "java"
+  // TypeScript: a function's overloads, a variable's declaration (already the header), a namespace's members
+  const methodsTitle = type.kind === "FUNCTION" ? (type.methods.length > 1 ? "Overloads" : "Signature") : "Methods"
+  const showFields = type.kind !== "VARIABLE"
+  const nestedTitle = type.kind === "NAMESPACE" ? "Declarations" : "Nested types"
+  const findings = useTypeFindings(type.qualifiedName)
 
   useEffect(() => {
     if (!scrollToElement(member ? document.getElementById(member) : null)) window.scrollTo({ top: 0 })
   }, [type.qualifiedName, member])
 
   const sections = [
+    { id: "findings", label: `Findings (${findings.length})`, show: findings.length > 0 },
     { id: "constants", label: "Enum constants", show: type.enumConstants.length > 0 },
     { id: "components", label: "Record components", show: type.recordComponents.length > 0 },
-    { id: "fields", label: "Fields", show: type.fields.length > 0 },
+    { id: "fields", label: language === "typescript" ? "Properties" : "Fields", show: showFields && type.fields.length > 0 },
     { id: "constructors", label: "Constructors", show: type.constructors.length > 0 },
-    { id: "methods", label: "Methods", show: type.methods.length > 0 },
-    { id: "nested", label: "Nested types", show: type.nestedTypes.length > 0 },
+    { id: "methods", label: methodsTitle, show: type.methods.length > 0 },
+    { id: "nested", label: nestedTitle, show: type.nestedTypes.length > 0 },
     {
       id: "inherited",
       label: "Inherited members",
@@ -64,7 +81,7 @@ export function TypePage({ indexed, member }: { indexed: IndexedType; member?: s
             <TypeIcon type={type} className="size-5" />
             <Badge variant="secondary">{kindLabel(type)}</Badge>
             <a href={routes.pkg(indexed.module.id, packageName)} className="font-mono underline-offset-4 hover:text-foreground hover:underline">
-              {packageName || "(default package)"}
+              {packageName || (language === "typescript" ? "(project root)" : "(default package)")}
             </a>
             {isDeprecated(type) && <Badge variant="destructive">Deprecated</Badge>}
           </div>
@@ -72,7 +89,7 @@ export function TypePage({ indexed, member }: { indexed: IndexedType; member?: s
             {displayName(indexed)}
             <TypeParams params={type.typeParameters} className="text-muted-foreground" />
           </h1>
-          <Signature>
+          {type.signature ? <WrittenSignature code={type.signature} language={language} /> : <Signature>
             <Annotations annotations={type.annotations} />
             <span className="text-muted-foreground">{modifiersToString(type.modifiers)}</span> {KIND_KEYWORD[type.kind]}{" "}
             <span className="font-semibold">{type.name}</span>
@@ -94,7 +111,7 @@ export function TypePage({ indexed, member }: { indexed: IndexedType; member?: s
                 ))}
               </>
             )}
-          </Signature>
+          </Signature>}
           {indexed.outer && (
             <p className="text-sm text-muted-foreground">
               Nested in <TypeNameLink name={displayName(indexed.outer)} qualifiedName={indexed.outer.type.qualifiedName} />
@@ -118,6 +135,12 @@ export function TypePage({ indexed, member }: { indexed: IndexedType; member?: s
               ))}
             </div>
           </section>
+        )}
+
+        {findings.length > 0 && (
+          <Section id="findings" title="Findings">
+            <FindingsTable findings={findings} showType={findings.some((f) => f.typeName !== type.qualifiedName)} />
+          </Section>
         )}
 
         {type.enumConstants.length > 0 && (
@@ -171,28 +194,30 @@ export function TypePage({ indexed, member }: { indexed: IndexedType; member?: s
           </Section>
         )}
 
-        {type.fields.length > 0 && (
-          <Section id="fields" title="Fields">
-            {type.fields.map((f) => <FieldCard key={f.name} field={f} packageName={packageName} />)}
+        {showFields && type.fields.length > 0 && (
+          <Section id="fields" title={language === "typescript" ? "Properties" : "Fields"}>
+            {type.fields.map((f) => <FieldCard key={f.name} field={f} packageName={packageName} language={language} />)}
           </Section>
         )}
 
         {type.constructors.length > 0 && (
           <Section id="constructors" title="Constructors">
-            {type.constructors.map((c) => <MemberCard key={memberId(c)} member={c} packageName={packageName} typeName={type.qualifiedName} />)}
+            {type.constructors.map((c) => <MemberCard key={memberId(c)} member={c} packageName={packageName} typeName={type.qualifiedName} language={language} />)}
           </Section>
         )}
 
         {type.methods.length > 0 && (
-          <Section id="methods" title="Methods">
-            {[...type.methods]
-              .sort((a, b) => a.name.localeCompare(b.name))
-              .map((m) => <MemberCard key={memberId(m)} member={m} packageName={packageName} typeName={type.qualifiedName} />)}
+          <Section id="methods" title={methodsTitle}>
+            {(type.kind === "FUNCTION" ? type.methods : [...type.methods].sort((a, b) => a.name.localeCompare(b.name)))
+              .map((m, i) => (
+                <MemberCard key={memberId(m) + i} member={m} packageName={packageName} typeName={type.qualifiedName} language={language}
+                  repeatsHeader={!!m.signature && m.signature === type.signature} />
+              ))}
           </Section>
         )}
 
         {type.nestedTypes.length > 0 && (
-          <Section id="nested" title="Nested types">
+          <Section id="nested" title={nestedTitle}>
             <ul className="flex flex-col gap-2">
               {type.nestedTypes.map((n) => (
                 <li key={n.qualifiedName} className="flex flex-col">
@@ -314,7 +339,7 @@ function DocTags({ doc }: { doc?: Javadoc }) {
   )
 }
 
-function FieldCard({ field, packageName }: { field: Field; packageName: string }) {
+function FieldCard({ field, packageName, language }: { field: Field; packageName: string; language: string }) {
   return (
     <div id={field.name} className="flex scroll-mt-20 flex-col gap-3 rounded-xl border p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -323,17 +348,24 @@ function FieldCard({ field, packageName }: { field: Field; packageName: string }
         {hasModifier(field.modifiers, "FINAL") && <Badge variant="outline">final</Badge>}
         {isDeprecated(field) && <Badge variant="destructive">Deprecated</Badge>}
       </div>
-      <Signature>
+      {field.signature ? <WrittenSignature code={field.signature} language={language} /> : <Signature>
         <Annotations annotations={field.annotations} />
         <span className="text-muted-foreground">{modifiersToString(field.modifiers)}</span> <TypeRef type={field.type} /> {field.name}
         {field.initializer && field.initializer.length <= 80 && <span className="text-muted-foreground"> = {field.initializer}</span>}
-      </Signature>
+      </Signature>}
       {field.javadoc && <JavadocText text={field.javadoc.description} packageName={packageName} />}
     </div>
   )
 }
 
-function MemberCard({ member, packageName, typeName }: { member: Method | Constructor; packageName: string; typeName: string }) {
+function MemberCard({ member, packageName, typeName, language, repeatsHeader = false }: {
+  member: Method | Constructor
+  packageName: string
+  typeName: string
+  language: string
+  /** The signature is the page header's already (a function with one signature): not shown twice. */
+  repeatsHeader?: boolean
+}) {
   const id = memberId(member)
   const method = "returnType" in member ? (member as Method) : undefined
   const doc = member.javadoc
@@ -358,7 +390,7 @@ function MemberCard({ member, packageName, typeName }: { member: Method | Constr
         )}
       </div>
 
-      <Signature>
+      {repeatsHeader ? null : member.signature ? <WrittenSignature code={member.signature} language={language} /> : <Signature>
         <Annotations annotations={member.annotations} />
         <span className="text-muted-foreground">{modifiersToString(member.modifiers)}</span>
         {member.typeParameters.length > 0 && <> <TypeParams params={member.typeParameters} /></>}
@@ -382,7 +414,7 @@ function MemberCard({ member, packageName, typeName }: { member: Method | Constr
             ))}
           </>
         )}
-      </Signature>
+      </Signature>}
 
       {doc?.description && <JavadocText text={doc.description} packageName={packageName} />}
       {doc?.inheritedFrom && (
@@ -443,7 +475,7 @@ function MemberCard({ member, packageName, typeName }: { member: Method | Constr
             Source{method ? ` · ${method.lineCount} lines` : ""}
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <JavaCode code={member.body} className="mt-2" />
+            <JavaCode code={member.body} className="mt-2" language={language === "typescript" ? "tsx" : "java"} />
           </CollapsibleContent>
         </Collapsible>
       )}

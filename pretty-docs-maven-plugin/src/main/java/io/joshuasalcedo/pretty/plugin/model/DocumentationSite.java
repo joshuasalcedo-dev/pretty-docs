@@ -26,5 +26,8 @@ public class DocumentationSite {
     private List<ExternalDocumentation> externalDocs; // javadoc sites for types outside the project
     private io.joshuasalcedo.pretty.spring.model.SpringStructure spring; // Spring wiring, null when the project does not use Spring
     private List<DiagramStructure> diagrams; // PlantUML diagrams under diagrams/
-    private transient java.util.Map<String, java.nio.file.Path> readmeAssets; // site path -> README image to copy; not serialized
+    private io.joshuasalcedo.pretty.quality.model.QualityStructure quality; // PMD, SpotBugs and TypeScript findings; null when not run
+    private String logo; // site path of the project logo, null when there is none
+    private String repositoryUrl; // the source repository (e.g. GitHub), null when unknown
+    private transient java.util.Map<String, java.nio.file.Path> readmeAssets; // site path -> file to copy (README images, assets, logo); not serialized
 }

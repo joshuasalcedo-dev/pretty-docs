@@ -20,7 +20,9 @@ export type ModifierKind =
   | "SEALED"
   | "NON_SEALED"
 
-export type TypeKind = "CLASS" | "INTERFACE" | "ENUM" | "ANNOTATION" | "RECORD"
+// The last four are TypeScript declarations (pretty-ts): a function's overloads are its methods,
+// a variable is one field, a namespace's declarations are its nested types.
+export type TypeKind = "CLASS" | "INTERFACE" | "ENUM" | "ANNOTATION" | "RECORD" | "TYPE_ALIAS" | "FUNCTION" | "VARIABLE" | "NAMESPACE"
 
 export interface Modifier {
   kind: ModifierKind
@@ -96,6 +98,8 @@ export interface Field {
   annotations: Annotation[]
   initializer?: string
   javadoc?: Javadoc
+  /** The declaration as written, for languages other than Java (TypeScript). */
+  signature?: string
   readBy: MemberReference[]
   writtenBy: MemberReference[]
   startLine: number
@@ -112,6 +116,8 @@ export interface Method {
   typeParameters: TypeParameter[]
   body?: string
   javadoc?: Javadoc
+  /** The declaration as written, for languages other than Java (TypeScript). */
+  signature?: string
   calledBy: MemberReference[]
   calls: MemberReference[]
   cyclomaticComplexity: number
@@ -129,6 +135,8 @@ export interface Constructor {
   typeParameters: TypeParameter[]
   body?: string
   javadoc?: Javadoc
+  /** The declaration as written, for languages other than Java (TypeScript). */
+  signature?: string
   calledBy: MemberReference[]
   startLine: number
   endLine: number
@@ -163,6 +171,8 @@ export interface TypeStructure {
   constructors: Constructor[]
   nestedTypes: TypeStructure[]
   javadoc?: Javadoc
+  /** The declaration as written, for languages other than Java (TypeScript). */
+  signature?: string
   enumConstants: EnumConstant[]
   usedBy: string[]
   recordComponents: RecordComponent[]
@@ -175,6 +185,8 @@ export interface TypeStructure {
 
 export interface JavaFile {
   fileName: string
+  /** Absent for Java; "typescript" for files read by pretty-ts. */
+  language?: string
   filePath?: string
   packageName: string
   types: TypeStructure[]
@@ -244,15 +256,28 @@ export interface ModuleStatistics {
   maxComplexity?: number
 }
 
+/** An image found in a module directory. */
+export interface Asset {
+  /** Relative to the module directory. */
+  path: string
+  /** The copy in the site, relative to the site root. */
+  href: string
+  size: number
+}
+
 export interface ModuleDocumentation {
   id: string
   parentId?: string
+  /** "typescript" for TypeScript packages and workspaces, which form a tree of their own; Java otherwise. */
+  language?: "java" | "typescript"
   relativePath: string
   project: MavenProject
   files: JavaFile[]
   testFiles: JavaFile[]
   statistics: ModuleStatistics
   readmeHtml?: string
+  /** Images in the module directory (icons, logos, public/ files), copied into the site. */
+  assets?: Asset[]
   /** Script with the module's full sources; until it is loaded, files hold an outline (see lib/docs/module-data.ts). */
   dataScript?: string
 }
@@ -264,11 +289,16 @@ export interface DocumentationSite {
   generatedAt: string
   visibility: string
   rootModuleId?: string
+  /** Site path of the project logo. */
+  logo?: string
+  /** The source repository, e.g. on GitHub. */
+  repositoryUrl?: string
   modules: ModuleDocumentation[]
   mode?: "resolved" | "source"
   externalDocs?: ExternalDocumentation[]
   spring?: SpringStructure
   diagrams?: DiagramStructure[]
+  quality?: QualityStructure
 }
 
 export interface ExternalDocumentation {
@@ -428,6 +458,38 @@ export interface SpringStructure {
   configurationFiles?: ConfigurationFile[]
   configurationKeys?: ConfigurationKey[]
   issues: BeanIssue[]
+}
+
+// ---- Code quality (pretty-quality and the TypeScript compiler), present when the checks ran
+
+export type QualityPriority = "HIGH" | "MEDIUM" | "LOW"
+
+export interface QualityFinding {
+  tool: string // PMD, SpotBugs, TypeScript
+  rule: string
+  category: string
+  priority: QualityPriority
+  message: string
+  moduleId?: string
+  file?: string // relative to the project root
+  line: number
+  endLine: number
+  typeName?: string
+  memberName?: string
+  url?: string
+}
+
+export interface QualityToolRun {
+  name: string
+  version?: string
+  ran: boolean
+  note?: string
+  findings: number
+}
+
+export interface QualityStructure {
+  tools: QualityToolRun[]
+  findings: QualityFinding[]
 }
 
 export interface DiagramStructure {

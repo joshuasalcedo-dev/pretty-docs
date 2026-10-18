@@ -5,6 +5,8 @@ import io.joshuasalcedo.pretty.maven.MavenParser;
 import io.joshuasalcedo.pretty.plugin.model.DocumentationSite;
 import io.joshuasalcedo.pretty.plugin.model.ExternalDocumentation;
 import io.joshuasalcedo.pretty.plugin.model.ModuleDocumentation;
+import io.joshuasalcedo.pretty.quality.model.QualityFinding;
+import io.joshuasalcedo.pretty.quality.model.QualityStructure;
 import io.joshuasalcedo.pretty.spring.model.BeanIssue;
 import io.joshuasalcedo.pretty.spring.model.SpringStructure;
 import org.apache.maven.execution.MavenSession;
@@ -116,6 +118,94 @@ public class GenerateMojo extends AbstractMojo {
     @Parameter(property = "pretty-docs.renderDiagrams", defaultValue = "true")
     private boolean renderDiagrams;
 
+    /**
+     * Document TypeScript projects (directories with a tsconfig.json) found in the modules' directories.
+     * Uses the TypeScript compiler bundled with the plugin, run by {@code node} from the PATH; without
+     * node, TypeScript is skipped with a message. Off by default: turn it on with {@code <typescript>true</typescript>}
+     * or {@code -Dpretty-docs.typescript=true}.
+     */
+    @Parameter(property = "pretty-docs.typescript", defaultValue = "false")
+    private boolean typescript;
+
+    /** Directories to leave out of the TypeScript search only, relative to the root module (e.g. legacy); see also ignores. */
+    @Parameter(property = "pretty-docs.typescriptExcludes")
+    private List<String> typescriptExcludes = new ArrayList<>();
+
+    /**
+     * The TypeScript projects to document (directories with a tsconfig.json, relative to the root
+     * module), instead of every one found. For example:
+     * <pre>
+     * &lt;typescriptProjects&gt;
+     *   &lt;project&gt;applications/landing&lt;/project&gt;
+     *   &lt;project&gt;swaswa-lib/ts/ui&lt;/project&gt;
+     * &lt;/typescriptProjects&gt;
+     * </pre>
+     */
+    @Parameter(property = "pretty-docs.typescriptProjects")
+    private List<String> typescriptProjects = new ArrayList<>();
+
+    /** Group TypeScript packages under their npm, yarn, pnpm or bun workspace; false lists each package on its own. */
+    @Parameter(property = "pretty-docs.typescriptWorkspaces", defaultValue = "true")
+    private boolean typescriptWorkspaces;
+
+    /** Report the TypeScript compiler's errors on the Quality page (with quality on). */
+    @Parameter(property = "pretty-docs.typescriptTypeCheck", defaultValue = "true")
+    private boolean typescriptTypeCheck;
+
+    /** Document TypeScript test files (*.test.ts, *.spec.ts, __tests__). By default as includeTestSources. */
+    @Parameter(property = "pretty-docs.typescriptIncludeTests")
+    private Boolean typescriptIncludeTests;
+
+    /** The node executable to run the TypeScript analysis with, e.g. C:/tools/node/node.exe. By default node from the PATH. */
+    @Parameter(property = "pretty-docs.node")
+    private String node;
+
+    /** Code quality findings in the site: PMD, SpotBugs and TypeScript compiler errors (each can be turned off below). */
+    @Parameter(property = "pretty-docs.quality", defaultValue = "true")
+    private boolean quality;
+
+    /** Run PMD on the Java sources (likely bugs, risky concurrency and resource handling, performance, security). */
+    @Parameter(property = "pretty-docs.pmd", defaultValue = "true")
+    private boolean pmd;
+
+    /** Run SpotBugs on the classes the last build compiled; modules without target/classes are skipped. */
+    @Parameter(property = "pretty-docs.spotbugs", defaultValue = "true")
+    private boolean spotbugs;
+
+    /**
+     * Directories to leave out entirely: Maven modules, TypeScript packages and assets inside them.
+     * Relative to the root module; a single name matches anywhere; globs work. For example:
+     * <pre>
+     * &lt;ignores&gt;
+     *   &lt;ignore&gt;legacy&lt;/ignore&gt;
+     *   &lt;ignore&gt;frameworks/tauri/examples&lt;/ignore&gt;
+     *   &lt;ignore&gt;fixtures&lt;/ignore&gt;
+     * &lt;/ignores&gt;
+     * </pre>
+     * On the command line: {@code -Dpretty-docs.ignores=legacy,fixtures}.
+     */
+    @Parameter(property = "pretty-docs.ignores")
+    private List<String> ignores = new ArrayList<>();
+
+    /** Also leave out whatever the repository's .gitignore files ignore. */
+    @Parameter(property = "pretty-docs.gitignore", defaultValue = "true")
+    private boolean gitignore;
+
+    /**
+     * Logo for the site header, relative to the root module. By default a logo.svg/png in the root,
+     * docs/, .github/, assets/ or public/, else the most logo-like image among the modules' assets.
+     */
+    @Parameter(property = "pretty-docs.logo")
+    private String logo;
+
+    /** Link to the source repository in the site header. By default the POM's scm url, else the git remote "origin". */
+    @Parameter(property = "pretty-docs.repositoryUrl")
+    private String repositoryUrl;
+
+    /** Show the images in the modules' directories (icons, logos, public/ and static/ files) on an Assets page. */
+    @Parameter(property = "pretty-docs.assets", defaultValue = "true")
+    private boolean assets;
+
     @Parameter(property = "pretty-docs.skip", defaultValue = "false")
     private boolean skip;
 
@@ -141,9 +231,14 @@ public class GenerateMojo extends AbstractMojo {
         session.getProjects().forEach(p -> reactorIds.add(p.getGroupId() + ":" + p.getArtifactId()));
         List<MavenProject> projects = new ArrayList<>();
         List<DocumentationGenerator.ModuleInput> modules = new ArrayList<>();
+        Ignores ignored = new Ignores(project.getBasedir().toPath(), ignores, gitignore);
         for (MavenProject module : session.getProjects()) {
             if (excludeModules.contains(module.getArtifactId())) {
                 getLog().debug("Excluding " + module.getArtifactId());
+                continue;
+            }
+            if (module != project && ignored.test(module.getBasedir().toPath())) {
+                getLog().debug("Ignoring " + module.getArtifactId() + " (in <ignores> or .gitignore)");
                 continue;
             }
             projects.add(module);
@@ -158,7 +253,8 @@ public class GenerateMojo extends AbstractMojo {
                             .filter(d -> !"test".equals(d.getScope()))
                             .map(d -> d.getGroupId() + ":" + d.getArtifactId())
                             .filter(reactorIds::contains)
-                            .distinct().toList()));
+                            .distinct().toList(),
+                    Path.of(module.getBuild().getOutputDirectory())));
         }
 
         Map<String, String> dependencies = declaredDependencies(projects);
@@ -171,9 +267,24 @@ public class GenerateMojo extends AbstractMojo {
         }
 
         try {
+            Path cacheRoot = session.getRepositorySession().getLocalRepository().getBasedir().toPath().resolve(".cache/pretty-docs");
             DocumentationSite site = new DocumentationGenerator(level, includeMethodBodies,
                     plugin.getArtifactId() + " " + plugin.getVersion())
+                    .withTypeScript(new TypeScriptModules.Options(typescript, typescriptExcludes, cacheRoot.resolve("typescript"),
+                            typescriptIncludeTests == null ? includeTestSources : typescriptIncludeTests,
+                            typescriptProjects, typescriptWorkspaces, typescriptTypeCheck, node))
+                    .withProject(new DocumentationGenerator.ProjectOptions(ignores, gitignore, logo, repositoryUrl, assets))
+                    .withQuality(quality ? new DocumentationGenerator.QualityOptions(pmd, spotbugs, typescript) : null)
                     .generate(title, project.getBasedir().toPath(), modules, resolve, getLog()::warn);
+            if (site.getQuality() != null) {
+                logQuality(site.getQuality());
+            }
+            long typescriptModules = site.getModules().stream().filter(m -> "typescript".equals(m.getLanguage()) && !m.getFiles().isEmpty()).count();
+            if (typescriptModules > 0) {
+                getLog().info("TypeScript: " + typescriptModules + " project(s), "
+                        + site.getModules().stream().filter(m -> "typescript".equals(m.getLanguage()) && !m.getFiles().isEmpty())
+                        .mapToInt(m -> m.getStatistics().getFiles()).sum() + " file(s)");
+            }
             if (resolvedMode && !"resolved".equals(site.getMode())) {
                 getLog().warn("Resolved mode was not available; documented from sources only");
             }
@@ -364,6 +475,19 @@ public class GenerateMojo extends AbstractMojo {
                 case INFO -> getLog().debug("[spring] " + issue.getMessage());
             }
         }
+    }
+
+    /** One line per tool; high-priority findings as warnings (the rest are in the site). */
+    private void logQuality(QualityStructure quality) {
+        for (QualityStructure.ToolRun tool : quality.getTools()) {
+            long high = quality.getFindings().stream()
+                    .filter(f -> f.getTool().equals(tool.getName()) && f.getPriority() == QualityFinding.Priority.HIGH).count();
+            getLog().info("Quality: " + tool.getName() + (tool.getVersion() != null ? " " + tool.getVersion() : "") + ": "
+                    + (tool.isRan() ? tool.getFindings() + " finding(s), " + high + " high priority (" + tool.getNote() + ")" : "skipped, " + tool.getNote()));
+        }
+        quality.getFindings().stream().filter(f -> f.getPriority() == QualityFinding.Priority.HIGH).limit(50).forEach(f ->
+                getLog().warn("[" + f.getTool().toLowerCase(Locale.ROOT) + "] " + f.getFile() + (f.getLine() > 0 ? ":" + f.getLine() : "")
+                        + " " + f.getRule() + ": " + f.getMessage()));
     }
 
     /** Tells the user how to serve the site, with the link to open. */

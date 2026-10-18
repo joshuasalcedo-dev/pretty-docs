@@ -12,6 +12,7 @@ import java.util.List;
 @Builder
 public class JavaFileStructure {
     private String fileName;
+    private String language; // null for Java; "typescript" for files read by pretty-ts
     private String filePath;
     private String packageName;
     private List<ImportStructure> imports;

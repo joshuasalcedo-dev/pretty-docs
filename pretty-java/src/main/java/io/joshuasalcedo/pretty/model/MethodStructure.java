@@ -18,6 +18,7 @@ public class MethodStructure {
     private List<TypeParameterStructure> typeParameters; // <T> void method()
     private String body;
     private JavadocStructure javadoc;
+    private String signature; // the declaration as written, for languages other than Java (null for Java)
     private List<CommentStructure> comments;
     
     // Usage information

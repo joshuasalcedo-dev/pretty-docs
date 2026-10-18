@@ -26,6 +26,8 @@ import { useRoute, type Route } from "@/lib/router"
 import { ModulePage } from "@/pages/module-page"
 import { PackagePage } from "@/pages/package-page"
 import { SpringPage } from "@/pages/spring-page"
+import { AssetsPage } from "@/pages/assets-page"
+import { QualityPage } from "@/pages/quality-page"
 import { StatsPage } from "@/pages/stats-page"
 import { TypePage } from "@/pages/type-page"
 
@@ -143,6 +145,10 @@ function Page({ route, index }: { route: Route; index: DocsIndex }) {
     }
     case "spring":
       return <SpringPage tab={route.tab} />
+    case "quality":
+      return <QualityPage />
+    case "assets":
+      return <AssetsPage />
     case "stats":
       return <StatsPage />
   }
@@ -170,6 +176,8 @@ function Crumbs({ route, index }: { route: Route; index: DocsIndex }) {
   if (route.page === "module") addModule(route.moduleId)
   if (route.page === "spring") items.push({ label: "Spring" })
   if (route.page === "stats") items.push({ label: "Statistics" })
+  if (route.page === "quality") items.push({ label: "Quality" })
+  if (route.page === "assets") items.push({ label: "Assets" })
   if (route.page === "package") {
     addModule(route.moduleId)
     items.push({ label: route.packageName || "(default)" })
@@ -251,6 +259,8 @@ function pageTitle(route: Route, index: DocsIndex) {
   }
   if (route.page === "spring") return `Spring · ${site}`
   if (route.page === "stats") return `Statistics · ${site}`
+  if (route.page === "quality") return `Quality · ${site}`
+  if (route.page === "assets") return `Assets · ${site}`
   if (route.page === "package") return `${route.packageName || "(default)"} · ${site}`
   if (route.page === "module") {
     const module = index.modules.get(route.moduleId)

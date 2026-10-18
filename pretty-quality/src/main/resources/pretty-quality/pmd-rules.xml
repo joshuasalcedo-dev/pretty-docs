@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The PMD rules Pretty Docs runs: likely bugs and risky code, not style. Rules that mostly report
+  matters of taste, or that flood typical Spring / Lombok code, are left out.
+-->
+<ruleset name="pretty-docs"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+    <description>Likely bugs, risky concurrency, resource handling, performance traps and security issues.</description>
+
+    <rule ref="category/java/errorprone.xml">
+        <exclude name="AvoidLiteralsInIfCondition"/>
+        <exclude name="AvoidDuplicateLiterals"/>
+        <exclude name="AvoidFieldNameMatchingMethodName"/>
+        <exclude name="AvoidFieldNameMatchingTypeName"/>
+        <exclude name="MissingSerialVersionUID"/>
+        <exclude name="NullAssignment"/>
+        <exclude name="AssignmentInOperand"/>
+        <exclude name="TestClassWithoutTestCases"/>
+        <exclude name="UseLocaleWithCaseConversions"/>
+        <exclude name="AvoidCatchingGenericException"/>
+        <exclude name="UseProperClassLoader"/>
+        <exclude name="ImplicitSwitchFallThrough"/>
+    </rule>
+    <rule ref="category/java/multithreading.xml">
+        <exclude name="DoNotUseThreads"/>
+        <exclude name="UseConcurrentHashMap"/>
+        <exclude name="AvoidSynchronizedAtMethodLevel"/>
+        <exclude name="AvoidSynchronizedStatement"/>
+        <exclude name="AvoidUsingVolatile"/>
+        <!-- crashes on records and accessor-style methods in PMD 7.28 ("Empty node stream") -->
+        <exclude name="NonThreadSafeSingleton"/>
+    </rule>
+    <rule ref="category/java/performance.xml">
+        <exclude name="AvoidInstantiatingObjectsInLoops"/>
+        <exclude name="RedundantFieldInitializer"/>
+        <exclude name="TooFewBranchesForSwitch"/>
+        <exclude name="UseStringBufferForStringAppends"/>
+    </rule>
+    <rule ref="category/java/security.xml"/>
+    <rule ref="category/java/bestpractices.xml">
+        <exclude name="GuardLogStatement"/>
+        <exclude name="SystemPrintln"/>
+        <exclude name="UseVarargs"/>
+        <exclude name="LooseCoupling"/>
+        <exclude name="AbstractClassWithoutAbstractMethod"/>
+        <exclude name="JUnitAssertionsShouldIncludeMessage"/>
+        <exclude name="JUnitTestContainsTooManyAsserts"/>
+        <exclude name="JUnitTestsShouldIncludeAssert"/>
+        <exclude name="UnitTestAssertionsShouldIncludeMessage"/>
+        <exclude name="UnitTestContainsTooManyAsserts"/>
+        <exclude name="UnitTestShouldIncludeAssert"/>
+        <exclude name="MethodReturnsInternalArray"/>
+        <exclude name="ArrayIsStoredDirectly"/>
+        <exclude name="AvoidReassigningParameters"/>
+        <exclude name="AccessorMethodGeneration"/>
+        <exclude name="UseUtilityClass"/>
+        <exclude name="ReplaceHashtableWithMap"/>
+        <exclude name="ReplaceVectorWithList"/>
+        <exclude name="OnDemandImport"/>
+        <exclude name="ImplicitFunctionalInterface"/>
+    </rule>
+</ruleset>

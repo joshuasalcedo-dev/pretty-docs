@@ -7,6 +7,8 @@ export type Route =
   | { page: "type"; qualifiedName: string; member?: string }
   | { page: "spring"; tab?: string }
   | { page: "stats" }
+  | { page: "quality" }
+  | { page: "assets" }
   | { page: "not-found"; path: string }
 
 /** Hash routes (#/m/<module>, #/m/<module>/p/<package>, #/t/<type>/<member>) so the site works from file://. */
@@ -18,6 +20,8 @@ export function parseRoute(hash: string): Route {
     return { page: "package", moduleId: parts[1], packageName: parts[3] === "(default)" ? "" : parts[3] }
   }
   if (parts[0] === "stats" && parts.length === 1) return { page: "stats" }
+  if (parts[0] === "quality" && parts.length === 1) return { page: "quality" }
+  if (parts[0] === "assets" && parts.length === 1) return { page: "assets" }
   if (parts[0] === "spring" && parts.length <= 2) return { page: "spring", tab: parts[1] }
   if (parts[0] === "t" && (parts.length === 2 || parts.length === 3)) {
     return { page: "type", qualifiedName: parts[1], member: parts[2] }

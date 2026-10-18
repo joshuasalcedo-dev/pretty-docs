@@ -22,6 +22,7 @@ public class TypeStructure {
     private List<ConstructorStructure> constructors;
     private List<TypeStructure> nestedTypes; // Inner classes, etc.
     private JavadocStructure javadoc;
+    private String signature; // the declaration as written, for languages other than Java (null for Java)
     private List<CommentStructure> comments;
     private List<EnumConstantStructure> enumConstants; // For enums only
     private List<String> usedBy; // List of classes/methods that use this type

@@ -61,6 +61,10 @@ public final class DiagramGenerator {
             case RECORD -> "(R,#dcf2f1)";
             case ANNOTATION -> "(@,#eef0f3)";
             case CLASS -> type.getModifiers().stream().anyMatch(m -> m.getKind() == ModifierKind.ABSTRACT) ? "(A,#e6edf8)" : "(C,#dce8fb)";
+            case TYPE_ALIAS -> "(T,#dcf2f1)";
+            case NAMESPACE -> "(N,#eef0f3)";
+            case FUNCTION -> "(F,#e6edf8)";
+            case VARIABLE -> "(V,#eef0f3)";
         };
     }
 
@@ -86,11 +90,17 @@ public final class DiagramGenerator {
         }
 
         List<Diagram> diagrams = new ArrayList<>();
-        moduleDiagram(site).ifPresent(diagrams::add);
+        // Maven modules and TypeScript packages are separate builds: one graph each
+        List<ModuleDocumentation> java = site.getModules().stream().filter(m -> !"typescript".equals(m.getLanguage())).toList();
+        List<ModuleDocumentation> typescript = site.getModules().stream().filter(m -> "typescript".equals(m.getLanguage())).toList();
+        moduleDiagram(java, "modules", "Module dependencies").ifPresent(diagrams::add);
+        moduleDiagram(typescript, "packages", "TypeScript package dependencies").ifPresent(diagrams::add);
         for (ModuleDocumentation module : site.getModules()) {
             Map<String, List<TypeStructure>> byPackage = new TreeMap<>();
             for (JavaFileStructure file : module.getFiles()) {
-                byPackage.computeIfAbsent(file.getPackageName(), k -> new ArrayList<>()).addAll(file.getTypes());
+                // TypeScript functions and variables would crowd a class diagram without adding structure
+                byPackage.computeIfAbsent(file.getPackageName(), k -> new ArrayList<>()).addAll(file.getTypes().stream()
+                        .filter(t -> t.getKind() != TypeKind.FUNCTION && t.getKind() != TypeKind.VARIABLE).toList());
             }
             byPackage.forEach((pkg, types) -> {
                 if (!types.isEmpty()) {
@@ -243,6 +253,7 @@ public final class DiagramGenerator {
             case ANNOTATION -> "annotation";
             case RECORD -> "record";
             case CLASS -> type.getModifiers().stream().anyMatch(m -> m.getKind() == ModifierKind.ABSTRACT) ? "abstract class" : "class";
+            case TYPE_ALIAS, NAMESPACE, FUNCTION, VARIABLE -> "class"; // TypeScript: the spot letter tells them apart
         };
     }
 
@@ -278,15 +289,15 @@ public final class DiagramGenerator {
 
     // ----------------------------------------------------- module diagram
 
-    private Optional<Diagram> moduleDiagram(DocumentationSite site) {
-        if (site.getModules().size() < 2) {
+    private Optional<Diagram> moduleDiagram(List<ModuleDocumentation> modules, String id, String title) {
+        if (modules.size() < 2) {
             return Optional.empty();
         }
         Map<String, ModuleDocumentation> byId = new LinkedHashMap<>();
-        site.getModules().forEach(m -> byId.put(m.getId(), m));
+        modules.forEach(m -> byId.put(m.getId(), m));
         List<String> edges = new ArrayList<>();
         Set<String> connected = new HashSet<>();
-        for (ModuleDocumentation module : site.getModules()) {
+        for (ModuleDocumentation module : modules) {
             for (DependencyStructure dependency : module.getProject().getDependencies()) {
                 String target = dependency.getGroupId() + ":" + dependency.getArtifactId();
                 if (byId.containsKey(target) && !target.equals(module.getId())) {
@@ -297,11 +308,14 @@ public final class DiagramGenerator {
                 }
             }
         }
+        if (edges.isEmpty() && !id.equals("modules")) {
+            return Optional.empty(); // unrelated TypeScript packages: nothing to draw
+        }
         // Smetana's layout crashes on graphs mixing connected and unconnected nodes, so modules without
         // dependencies either way go into the legend (unless no module has any).
-        List<ModuleDocumentation> shown = edges.isEmpty() ? site.getModules()
-                : site.getModules().stream().filter(m -> connected.contains(m.getId())).toList();
-        List<String> unconnected = site.getModules().stream().filter(m -> !shown.contains(m)).map(DiagramGenerator::name).toList();
+        List<ModuleDocumentation> shown = edges.isEmpty() ? modules
+                : modules.stream().filter(m -> connected.contains(m.getId())).toList();
+        List<String> unconnected = modules.stream().filter(m -> !shown.contains(m)).map(DiagramGenerator::name).toList();
 
         StringBuilder puml = new StringBuilder("@startuml\n").append(STYLE);
         for (ModuleDocumentation module : shown) {
@@ -314,10 +328,10 @@ public final class DiagramGenerator {
         }
         puml.append("@enduml\n");
         return Optional.of(render(DiagramStructure.builder()
-                .id("modules")
+                .id(id)
                 .kind(DiagramStructure.Kind.MODULE_DEPENDENCIES)
-                .title("Module dependencies")
-                .elementCount(site.getModules().size())
+                .title(title)
+                .elementCount(modules.size())
                 .build(), puml.toString()));
     }
 
