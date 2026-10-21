@@ -73,7 +73,7 @@
 
     <!-- Project Properties -->
     <properties>
-        <revision>1.3.0-SNAPSHOT</revision>
+        <revision>1.3.0</revision>
 
         <!-- Build properties -->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

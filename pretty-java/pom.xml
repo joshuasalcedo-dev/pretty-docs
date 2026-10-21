@@ -12,6 +12,8 @@
 
 
     <artifactId>pretty-java</artifactId>
+    <name>Pretty Java</name>
+    <description>Parses Java sources (Eclipse JDT) into the Pretty Docs documentation model.</description>
 
     <dependencies>
         <dependency>
